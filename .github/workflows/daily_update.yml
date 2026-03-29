@@ -4,7 +4,12 @@ on:
   schedule:
     # 平日16時（JST = UTC 07:00）に実行
     - cron: '0 7 * * 1-5'
-  workflow_dispatch: # 手動実行
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: '休場日チェックをスキップして強制実行'
+        type: boolean
+        default: false
 
 jobs:
   update-stocks:
@@ -28,4 +33,5 @@ jobs:
         env:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FORCE_RUN:                 ${{ inputs.force_run }}
         run: python scripts/update_stocks.py

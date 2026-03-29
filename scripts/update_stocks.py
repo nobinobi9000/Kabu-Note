@@ -148,9 +148,12 @@ def main():
     today_str = today.isoformat()
     print(f"--- 処理開始: {now.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-    if is_tse_holiday(today):
-        print("【判定】東証休場日のためスキップします。")
+    force = os.environ.get("FORCE_RUN", "").lower() in ("true", "1", "yes")
+    if not force and is_tse_holiday(today):
+        print("【判定】東証休場日のためスキップします。（強制実行: FORCE_RUN=true で上書き可）")
         return
+    if force:
+        print("【判定】FORCE_RUN=true のため休場日チェックをスキップします。")
 
     supabase = get_supabase_client()
 
