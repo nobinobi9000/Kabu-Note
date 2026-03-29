@@ -1,0 +1,5 @@
+yfinance
+supabase
+jpholiday
+deep-translator
+pytz
