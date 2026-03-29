@@ -10,6 +10,7 @@ import Sector         from './pages/Sector'
 import Dividend       from './pages/Dividend'
 import Layout         from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
+import { BrokerProvider } from './context/BrokerContext'
 
 // ダークモード初期設定（フラッシュ防止）
 const saved = localStorage.getItem('theme')
@@ -28,22 +29,30 @@ export default function App() {
         <Route path="/update-password" element={<UpdatePassword />} />
         <Route path="/dashboard" element={
           <ProtectedRoute>
-            <Layout><Dashboard /></Layout>
+            <BrokerProvider>
+              <Layout><Dashboard /></Layout>
+            </BrokerProvider>
           </ProtectedRoute>
         } />
         <Route path="/stocks" element={
           <ProtectedRoute>
-            <Layout><Stocks /></Layout>
+            <BrokerProvider>
+              <Layout><Stocks /></Layout>
+            </BrokerProvider>
           </ProtectedRoute>
         } />
         <Route path="/sector" element={
           <ProtectedRoute>
-            <Layout><Sector /></Layout>
+            <BrokerProvider>
+              <Layout><Sector /></Layout>
+            </BrokerProvider>
           </ProtectedRoute>
         } />
         <Route path="/dividend" element={
           <ProtectedRoute>
-            <Layout><Dividend /></Layout>
+            <BrokerProvider>
+              <Layout><Dividend /></Layout>
+            </BrokerProvider>
           </ProtectedRoute>
         } />
         <Route path="*" element={<Navigate to="/" replace />} />

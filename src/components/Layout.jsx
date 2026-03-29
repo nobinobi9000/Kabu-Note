@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useBroker } from '../context/BrokerContext'
 
 const NAV = [
   { to: '/dashboard', label: 'サマリー',  icon: '▣' },
@@ -10,7 +11,8 @@ const NAV = [
 ]
 
 export default function Layout({ children }) {
-  const navigate = useNavigate()
+  const navigate                  = useNavigate()
+  const { brokers, selected, setSelected } = useBroker()
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     if (saved) return saved === 'dark'
@@ -68,10 +70,32 @@ export default function Layout({ children }) {
         </div>
       </aside>
 
-      {/* メインコンテンツ */}
-      <main className="flex-1 overflow-y-auto bg-slate-50 dark:bg-dark-bg">
-        {children}
-      </main>
+      {/* メインエリア */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* ブローカーフィルターヘッダー */}
+        {brokers.length > 0 && (
+          <header className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-dark-card border-b border-slate-200 dark:border-dark-border flex-wrap">
+            {['全て', ...brokers].map(b => (
+              <button
+                key={b}
+                onClick={() => setSelected(b)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                  selected === b
+                    ? 'bg-accent text-dark-bg'
+                    : 'bg-slate-100 dark:bg-dark-border text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {b}
+              </button>
+            ))}
+          </header>
+        )}
+
+        {/* ページコンテンツ */}
+        <main className="flex-1 overflow-y-auto bg-slate-50 dark:bg-dark-bg">
+          {children}
+        </main>
+      </div>
     </div>
   )
 }
