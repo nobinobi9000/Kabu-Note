@@ -1,12 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import Login      from './pages/Login'
-import Register   from './pages/Register'
-import Dashboard  from './pages/Dashboard'
-import Stocks     from './pages/Stocks'
-import Sector     from './pages/Sector'
-import Dividend   from './pages/Dividend'
-import Layout     from './components/Layout'
+import Login          from './pages/Login'
+import Register       from './pages/Register'
+import ResetPassword  from './pages/ResetPassword'
+import UpdatePassword from './pages/UpdatePassword'
+import Dashboard      from './pages/Dashboard'
+import Stocks         from './pages/Stocks'
+import Sector         from './pages/Sector'
+import Dividend       from './pages/Dividend'
+import Layout         from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
 
 // ダークモード初期設定（フラッシュ防止）
@@ -20,8 +22,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/"         element={<Login />} />
-        <Route path="/register" element={<Register />} />
+        <Route path="/"                element={<Login />} />
+        <Route path="/register"        element={<Register />} />
+        <Route path="/reset-password"  element={<ResetPassword />} />
+        <Route path="/update-password" element={<UpdatePassword />} />
         <Route path="/dashboard" element={
           <ProtectedRoute>
             <Layout><Dashboard /></Layout>
