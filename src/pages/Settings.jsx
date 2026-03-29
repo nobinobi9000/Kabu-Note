@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 
@@ -145,7 +146,39 @@ function PasswordSection() {
 
 // ── アカウント削除 ────────────────────────────────
 function DangerSection() {
-  const [confirm, setConfirm] = useState(false)
+  const navigate                  = useNavigate()
+  const [confirm, setConfirm]     = useState(false)
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState('')
+
+  async function handleDelete() {
+    setLoading(true)
+    setError('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-account`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      )
+      const json = await res.json()
+      if (!res.ok) {
+        setError(json.error ?? '削除に失敗しました')
+        setLoading(false)
+        return
+      }
+      await supabase.auth.signOut()
+      navigate('/')
+    } catch (e) {
+      setError('通信エラーが発生しました')
+      setLoading(false)
+    }
+  }
 
   return (
     <Section title="危険な操作">
@@ -165,18 +198,21 @@ function DangerSection() {
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-red-500 font-medium">本当に削除しますか？この操作は取り消せません。</p>
+          <Alert type="error" message={error} />
           <div className="flex gap-2 justify-end">
             <button
-              onClick={() => setConfirm(false)}
-              className="px-4 py-2 border border-slate-200 dark:border-dark-border text-sm rounded-lg hover:bg-slate-50 dark:hover:bg-dark-bg transition"
+              onClick={() => { setConfirm(false); setError('') }}
+              disabled={loading}
+              className="px-4 py-2 border border-slate-200 dark:border-dark-border text-sm rounded-lg hover:bg-slate-50 dark:hover:bg-dark-bg transition disabled:opacity-50"
             >
               キャンセル
             </button>
             <button
-              className="px-4 py-2 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 transition"
-              onClick={() => alert('アカウント削除機能は現在準備中です')}
+              onClick={handleDelete}
+              disabled={loading}
+              className="px-4 py-2 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 transition disabled:opacity-50"
             >
-              削除する
+              {loading ? '削除中...' : '削除する'}
             </button>
           </div>
         </div>
