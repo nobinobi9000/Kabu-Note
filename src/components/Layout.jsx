@@ -10,6 +10,10 @@ const NAV = [
   { to: '/dividend',  label: '配当',      icon: '¥' },
 ]
 
+const NAV_BOTTOM = [
+  { to: '/settings', label: '個人設定', icon: '⚙️' },
+]
+
 export default function Layout({ children }) {
   const navigate                  = useNavigate()
   const { brokers, selected, setSelected } = useBroker()
@@ -54,7 +58,23 @@ export default function Layout({ children }) {
             </NavLink>
           ))}
         </nav>
-        <div className="px-3 py-4 border-t border-slate-200 dark:border-dark-border space-y-2">
+        <div className="px-3 py-4 border-t border-slate-200 dark:border-dark-border space-y-1">
+          {/* 設定ナビ */}
+          {NAV_BOTTOM.map(({ to, label, icon }) => (
+            <NavLink
+              key={to} to={to}
+              className={({ isActive }) =>
+                `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  isActive
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-dark-bg'
+                }`
+              }
+            >
+              <span>{icon}</span>
+              <span>{label}</span>
+            </NavLink>
+          ))}
           <button
             onClick={() => setDark(d => !d)}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-dark-bg transition"

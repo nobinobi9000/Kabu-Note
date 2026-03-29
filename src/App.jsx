@@ -8,6 +8,7 @@ import Dashboard      from './pages/Dashboard'
 import Stocks         from './pages/Stocks'
 import Sector         from './pages/Sector'
 import Dividend       from './pages/Dividend'
+import Settings       from './pages/Settings'
 import Layout         from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
 import { BrokerProvider } from './context/BrokerContext'
@@ -52,6 +53,13 @@ export default function App() {
           <ProtectedRoute>
             <BrokerProvider>
               <Layout><Dividend /></Layout>
+            </BrokerProvider>
+          </ProtectedRoute>
+        } />
+        <Route path="/settings" element={
+          <ProtectedRoute>
+            <BrokerProvider>
+              <Layout><Settings /></Layout>
             </BrokerProvider>
           </ProtectedRoute>
         } />
