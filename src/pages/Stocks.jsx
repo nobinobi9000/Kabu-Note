@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useHoldings } from '../hooks/useHoldings'
 import HoldingModal from '../components/HoldingModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import SellModal from '../components/SellModal'
 import { yen, pnlYen, diff } from '../lib/format'
 
 function PnlCell({ value }) {
@@ -23,10 +24,11 @@ function DiffCell({ value }) {
 }
 
 export default function Stocks() {
-  const { holdings, loading, error, addHolding, updateHolding, deleteHolding } = useHoldings()
+  const { holdings, loading, error, addHolding, updateHolding, deleteHolding, sellHolding } = useHoldings()
 
   const [modal,   setModal]   = useState({ open: false, item: null })
   const [confirm, setConfirm] = useState({ open: false, id: null, name: '' })
+  const [sellModal, setSellModal] = useState({ open: false, holding: null })
 
   function openAdd()          { setModal({ open: true,  item: null }) }
   function openEdit(item)     { setModal({ open: true,  item }) }
@@ -36,6 +38,9 @@ export default function Stocks() {
     setConfirm({ open: true, id: item.id, name: item.stock?.name_ja || item.code })
   }
   function closeConfirm() { setConfirm({ open: false, id: null, name: '' }) }
+
+  function openSell(item) { setSellModal({ open: true, holding: item }) }
+  function closeSell()    { setSellModal({ open: false, holding: null }) }
 
   async function handleSubmit(data) {
     if (modal.item) {
@@ -50,8 +55,12 @@ export default function Stocks() {
     closeConfirm()
   }
 
+  async function handleSell(params) {
+    await sellHolding(sellModal.holding.id, params)
+  }
+
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       {/* ヘッダー */}
       <div className="flex items-center justify-between mb-4">
         <div>
@@ -167,6 +176,13 @@ export default function Stocks() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
+                        onClick={() => openSell(h)}
+                        className="px-2 py-0.5 rounded text-xs font-semibold bg-orange-100 dark:bg-orange-950 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900 transition"
+                        title="売却"
+                      >
+                        売却
+                      </button>
+                      <button
                         onClick={() => openEdit(h)}
                         className="text-slate-400 hover:text-accent transition text-xs"
                         title="編集"
@@ -203,6 +219,14 @@ export default function Stocks() {
         message={`「${confirm.name}」を削除しますか？`}
         onConfirm={handleDelete}
         onCancel={closeConfirm}
+      />
+
+      {/* 売却モーダル */}
+      <SellModal
+        open={sellModal.open}
+        holding={sellModal.holding}
+        onClose={closeSell}
+        onSubmit={handleSell}
       />
     </div>
   )

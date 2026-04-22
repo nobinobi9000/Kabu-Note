@@ -38,7 +38,7 @@ export default function Sector() {
   }, [filtered])
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* ドーナツグラフ */}
       <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
         <p className="text-sm font-semibold mb-4">セクター構成</p>

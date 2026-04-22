@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './useAuth'
+import { addToAnnualSummary } from '../lib/annualSummary'
 
 export function useHoldings() {
   const { user }                  = useAuth()
@@ -89,5 +90,57 @@ export function useHoldings() {
     await fetch()
   }
 
-  return { holdings, loading, error, refetch: fetch, addHolding, updateHolding, deleteHolding }
+  // 売却
+  async function sellHolding(id, { sellQuantity, sellPrice, date, addToCash }) {
+    const holding = holdings.find(h => h.id === id)
+    if (!holding) throw new Error('銘柄が見つかりません')
+
+    const realizedPnl = (Number(sellPrice) - Number(holding.cost_price)) * Number(sellQuantity)
+
+    // 1. transactions に記録
+    const { error: txErr } = await supabase.from('transactions').insert({
+      user_id:      user.id,
+      code:         holding.code,
+      type:         'sell',
+      date,
+      quantity:     Number(sellQuantity),
+      price:        Number(sellPrice),
+      cost_price:   Number(holding.cost_price),
+      realized_pnl: realizedPnl,
+      add_to_cash:  addToCash,
+    })
+    if (txErr) throw txErr
+
+    // 2. holdings を更新（部分売却 or 全量売却）
+    if (Number(sellQuantity) < Number(holding.quantity)) {
+      const { error: hErr } = await supabase.from('holdings')
+        .update({ quantity: Number(holding.quantity) - Number(sellQuantity), updated_at: new Date().toISOString() })
+        .eq('id', id).eq('user_id', user.id)
+      if (hErr) throw hErr
+    } else {
+      const { error: hErr } = await supabase.from('holdings')
+        .delete().eq('id', id).eq('user_id', user.id)
+      if (hErr) throw hErr
+    }
+
+    // 3. 現金残高を更新（addToCash の場合）
+    if (addToCash) {
+      const proceeds = Number(sellPrice) * Number(sellQuantity)
+      const { data: profile } = await supabase.from('profiles')
+        .select('cash_balance').eq('id', user.id).maybeSingle()
+      await supabase.from('profiles').upsert({
+        id:            user.id,
+        cash_balance:  (profile?.cash_balance || 0) + proceeds,
+        updated_at:    new Date().toISOString(),
+      })
+    }
+
+    // 4. annual_summary を更新
+    const year = new Date(date).getFullYear()
+    await addToAnnualSummary(user.id, year, { realized_pnl: realizedPnl })
+
+    await fetch()
+  }
+
+  return { holdings, loading, error, refetch: fetch, addHolding, updateHolding, deleteHolding, sellHolding }
 }

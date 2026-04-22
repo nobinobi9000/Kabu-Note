@@ -1,11 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend
+  CartesianGrid, Tooltip, Legend, ReferenceLine
 } from 'recharts'
 import { useBroker } from '../context/BrokerContext'
 import { useDailyHistory } from '../hooks/useDailyHistory'
+import { useTransactions } from '../hooks/useTransactions'
+import { useAnnualSummary } from '../hooks/useAnnualSummary'
+import { useAuth } from '../hooks/useAuth'
+import { supabase } from '../lib/supabase'
 import { yen, pnlYen, pct, diff } from '../lib/format'
+import ScreenerWidget from '../components/ScreenerWidget'
 
 const RANGES = [
   { label: '30日', days: 30 },
@@ -17,7 +22,7 @@ function KpiCard({ label, value, sub, positive }) {
   return (
     <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
       <p className="text-xs text-slate-400 mb-1">{label}</p>
-      <p className={`text-2xl font-bold ${positive === true ? 'text-emerald-500' : positive === false ? 'text-red-500' : ''}`}>
+      <p className={`text-xl md:text-2xl font-bold ${positive === true ? 'text-emerald-500' : positive === false ? 'text-red-500' : ''}`}>
         {value}
       </p>
       {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
@@ -40,30 +45,60 @@ function CustomTooltip({ active, payload, label }) {
 }
 
 export default function Dashboard() {
+  const { user }    = useAuth()
   const { filtered } = useBroker()
   const [range, setRange]   = useState(30)
   const { data: history, loading: histLoading } = useDailyHistory(range)
+  const { transactions }  = useTransactions()
+  const { summaries }     = useAnnualSummary()
+  const [cashBalance, setCashBalance] = useState(0)
 
-  // KPI集計
-  const totalMarket = filtered.reduce((s, h) => s + (h.mktVal || 0), 0)
+  // 現金残高を取得
+  useEffect(() => {
+    if (!user) return
+    supabase.from('profiles').select('cash_balance').eq('id', user.id).maybeSingle()
+      .then(({ data }) => setCashBalance(data?.cash_balance || 0))
+  }, [user])
+
+  // KPI集計（現金含む）
+  const totalMarket = filtered.reduce((s, h) => s + (h.mktVal || 0), 0) + cashBalance
   const totalCost   = filtered.reduce((s, h) => s + (h.costVal || 0), 0)
-  const totalPnl    = totalMarket - totalCost
+  const totalPnl    = totalMarket - totalCost - cashBalance  // 含み損益（現金除く）
   const pnlRate     = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0
 
   // チャートデータ整形
   const chartData = history.map(r => ({
-    date:              r.date.slice(5),   // MM-DD
+    date:               r.date.slice(5),
     total_market_value: r.total_market_value,
-    total_pnl_rate:    r.total_pnl_rate,
+    total_pnl_rate:     r.total_pnl_rate,
   }))
 
+  // 売却イベント（チャートの日付に存在するものだけ）
+  const chartDateSet = new Set(chartData.map(d => d.date))
+  const sellEvents = transactions
+    .filter(t => t.type === 'sell')
+    .map(t => ({ ...t, chartDate: t.date?.slice(5) }))
+    .filter(t => chartDateSet.has(t.chartDate))
+    // 同日複数をまとめる
+    .reduce((acc, t) => {
+      const key = t.chartDate
+      if (!acc[key]) acc[key] = { date: key, codes: [], pnl: 0 }
+      acc[key].codes.push(t.code)
+      acc[key].pnl += Number(t.realized_pnl || 0)
+      return acc
+    }, {})
+
+  // 年間サマリー
+  const currentYear = new Date().getFullYear()
+  const getSum = (year) => summaries.find(s => s.year === year) || { realized_pnl: 0, received_dividends: 0 }
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* KPIカード */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <KpiCard label="総評価額" value={yen(totalMarket)} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+        <KpiCard label="総評価額" value={yen(totalMarket)} sub={cashBalance > 0 ? `現金 ${yen(cashBalance)} 含む` : undefined} />
         <KpiCard
-          label="トータル損益"
+          label="含み損益"
           value={pnlYen(totalPnl)}
           positive={totalPnl >= 0}
         />
@@ -73,12 +108,21 @@ export default function Dashboard() {
           positive={pnlRate >= 0}
           sub={`取得価額: ${yen(totalCost)}`}
         />
+        {cashBalance > 0 && (
+          <KpiCard label="現金残高" value={yen(cashBalance)} />
+        )}
       </div>
+
+      {/* スクリーナーウィジェット */}
+      <ScreenerWidget />
 
       {/* 資産推移グラフ */}
       <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <p className="text-sm font-semibold">資産推移</p>
+          <div>
+            <p className="text-sm font-semibold">資産推移</p>
+            <p className="text-xs text-slate-400 mt-0.5">全口座合計（証券会社フィルター対象外）</p>
+          </div>
           <div className="flex gap-1">
             {RANGES.map(r => (
               <button
@@ -131,6 +175,22 @@ export default function Dashboard() {
                 name="損益率(%)" stroke="#f59e0b" strokeWidth={1.5}
                 strokeDasharray="4 2" dot={false}
               />
+              {/* 売却イベントの縦線 */}
+              {Object.values(sellEvents).map(ev => (
+                <ReferenceLine
+                  key={ev.date}
+                  yAxisId="left"
+                  x={ev.date}
+                  stroke="#f97316"
+                  strokeDasharray="3 3"
+                  label={{
+                    value: ev.codes.join('/'),
+                    position: 'top',
+                    fontSize: 9,
+                    fill: '#f97316',
+                  }}
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -196,6 +256,45 @@ export default function Dashboard() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* 年間損益サマリー */}
+      <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
+        <div className="mb-4">
+          <p className="text-sm font-semibold">年間損益サマリー</p>
+          <p className="text-xs text-slate-400 mt-0.5">全口座合計（証券会社フィルター対象外）</p>
+        </div>
+        <div className="grid grid-cols-2 gap-6">
+          {[currentYear, currentYear - 1].map(year => {
+            const s     = getSum(year)
+            const total = (s.realized_pnl || 0) + (s.received_dividends || 0)
+            return (
+              <div key={year}>
+                <p className="text-xs font-semibold text-slate-400 mb-2">{year}年</p>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">売却損益</span>
+                    <span className={`font-semibold ${(s.realized_pnl || 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {pnlYen(s.realized_pnl || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">受取配当（確定）</span>
+                    <span className="font-semibold text-emerald-500">
+                      +{yen(s.received_dividends || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-100 dark:border-dark-border">
+                    <span className="font-semibold">合計</span>
+                    <span className={`font-bold ${total >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {pnlYen(total)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
