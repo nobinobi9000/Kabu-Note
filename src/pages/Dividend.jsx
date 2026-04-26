@@ -43,7 +43,11 @@ export default function Dividend() {
   // 起動時に自動確定を実行
   useEffect(() => { autoConfirm() }, [autoConfirm])
 
-  const { monthlyData, annualConfirmed, annualForecast, annualYutai, withDividend } = useMemo(() => {
+  const { monthlyData, annualConfirmed, annualForecast, annualYutai, withDividend,
+          currentYear, currentYearStr } = useMemo(() => {
+    const currentYear    = new Date().getFullYear()
+    const currentYearStr = String(currentYear)
+
     const confirmedMap = {}
     const forecastMap  = {}
     const yutaiMap     = {}
@@ -53,21 +57,32 @@ export default function Dividend() {
       yutaiMap[m]     = 0
     })
 
-    // 配当集計
-    filtered.forEach(h => {
-      const month   = h.stock?.dividend_month?.slice(5, 7)
-      const divRate = Number(h.stock?.dividend_rate || 0)
-      if (!month || divRate === 0) return
+    // ── 確定済み: 当年の dividend_records から直接集計 ──────────────────
+    // 過去年度のレコードは含めず、記録時の実額（amount）を使用する
+    records
+      .filter(r => r.year === currentYear)
+      .forEach(r => {
+        const key = String(r.month).padStart(2, '0')
+        if (key in confirmedMap) {
+          confirmedMap[key] += Number(r.amount || 0)
+        }
+      })
 
-      const amount = divRate * Number(h.quantity)
-      if (isConfirmed(h.code, h.stock.dividend_month)) {
-        confirmedMap[month] = (confirmedMap[month] || 0) + amount
-      } else {
-        forecastMap[month] = (forecastMap[month] || 0) + amount
-      }
+    // ── 予定: dividend_month が当年かつ未確定のみ ──────────────────────
+    // 過去年度の dividend_month（例 "2025/09"）は一切含めない
+    filtered.forEach(h => {
+      const divMonth = h.stock?.dividend_month   // "YYYY/MM"
+      const divRate  = Number(h.stock?.dividend_rate || 0)
+      if (!divMonth || divRate === 0) return
+
+      const [yearStr, monthStr] = divMonth.split('/')
+      if (yearStr !== currentYearStr) return        // 当年以外はスキップ
+      if (isConfirmed(h.code, divMonth)) return     // 確定済みは上で処理済み
+
+      forecastMap[monthStr] = (forecastMap[monthStr] || 0) + divRate * Number(h.quantity)
     })
 
-    // 優待集計（month は 1〜12 の数値なので 2桁文字列に変換）
+    // ── 優待集計 ────────────────────────────────────────────────────────
     yutaiRecords.forEach(r => {
       const key = String(r.month).padStart(2, '0')
       if (key in yutaiMap) {
@@ -96,6 +111,8 @@ export default function Dividend() {
       annualForecast:  totalForecast,
       annualYutai:     totalYutai,
       withDividend:    list,
+      currentYear,
+      currentYearStr,
     }
   }, [filtered, records, yutaiRecords, isConfirmed])
 
@@ -189,12 +206,19 @@ export default function Dividend() {
               </thead>
               <tbody>
                 {withDividend.map(h => {
-                  const divRate   = Number(h.stock.dividend_rate)
-                  const expected  = divRate * Number(h.quantity)
-                  const confirmed = isConfirmed(h.code, h.stock.dividend_month)
-                  const rec       = getRecord(h.code, h.stock.dividend_month)
-                  const yutaiList = getYutaiForCode(h.code)
-                  const topYutai  = yutaiList[0] || null   // 最初の1件を表示
+                  const divRate    = Number(h.stock.dividend_rate)
+                  const expected   = divRate * Number(h.quantity)
+                  const divMonth   = h.stock?.dividend_month          // "YYYY/MM"
+                  const dmYear     = divMonth?.split('/')[0]
+                  // 当年の dividend_month のみ確定チェック対象とする
+                  // 過去年度の場合は次回権利月が未確定扱い（yfinance 更新待ち）
+                  const isCurrentYr = dmYear === currentYearStr
+                  const confirmed   = isCurrentYr && isConfirmed(h.code, divMonth)
+                  const rec         = isCurrentYr ? getRecord(h.code, divMonth) : null
+                  // 配当月表示: 当年かつ未確定のみ表示。確定済み・過去年度は「—」（次回権利月待ち）
+                  const divMonthDisp = (isCurrentYr && !confirmed) ? divMonth : null
+                  const yutaiList   = getYutaiForCode(h.code)
+                  const topYutai    = yutaiList[0] || null
 
                   return (
                     <tr key={h.id} className="border-b border-slate-50 dark:border-dark-border last:border-0 hover:bg-slate-50 dark:hover:bg-dark-bg/50">
@@ -205,7 +229,9 @@ export default function Dividend() {
                       <td className="px-4 py-3 text-right">¥{divRate.toLocaleString('ja-JP')}</td>
                       <td className="px-4 py-3 text-right">{Number(h.quantity).toLocaleString('ja-JP')} 株</td>
                       <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(expected)}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 text-xs">{h.stock.dividend_month || '—'}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 text-xs">
+                        {divMonthDisp || <span className="text-slate-300 dark:text-slate-600">—</span>}
+                      </td>
 
                       {/* 優待列 */}
                       <td className="px-4 py-3 min-w-[160px]">
@@ -231,7 +257,10 @@ export default function Dividend() {
 
                       <td className="px-4 py-3 text-slate-400 text-xs">{h.broker || '—'}</td>
                       <td className="px-4 py-3 text-center">
-                        {confirmed ? (
+                        {!isCurrentYr ? (
+                          // 過去年度: 次回権利月待ち（確定操作不可）
+                          <span className="text-xs text-slate-300 dark:text-slate-600">—</span>
+                        ) : confirmed ? (
                           <span className="inline-flex items-center gap-1 text-xs text-emerald-500">
                             ✓{rec?.auto_confirmed && <span className="text-slate-400">自動</span>}
                           </span>
