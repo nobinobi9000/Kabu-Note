@@ -3,7 +3,7 @@ export const yen = (n) =>
 
 export const pnlYen = (n) => {
   const v = Number(n ?? 0)
-  return `${v >= 0 ? '+' : ''}¥${Math.abs(v).toLocaleString('ja-JP', { maximumFractionDigits: 0 })}`
+  return `${v >= 0 ? '+' : '-'}¥${Math.abs(v).toLocaleString('ja-JP', { maximumFractionDigits: 0 })}`
 }
 
 export const pct = (n) => {
