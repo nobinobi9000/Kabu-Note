@@ -39,6 +39,8 @@ export function useDividendRecords(holdings = []) {
       if (existing) continue
 
       const amount = divRate * Number(h.quantity)
+      // 10〜12月権利確定は翌年3月ごろ支払い → 翌年の収入として計上
+      const paymentYear = m >= 10 ? y + 1 : y
       await supabase.from('dividend_records').insert({
         user_id:        user.id,
         code:           h.code,
@@ -48,7 +50,7 @@ export function useDividendRecords(holdings = []) {
         quantity:       Number(h.quantity),
         auto_confirmed: true,
       })
-      await addToAnnualSummary(user.id, y, { received_dividends: amount })
+      await addToAnnualSummary(user.id, paymentYear, { received_dividends: amount })
     }
     await fetchRecords()
   }, [user, holdings, fetchRecords])
@@ -80,7 +82,9 @@ export function useDividendRecords(holdings = []) {
       confirmed_at:   new Date().toISOString(),
     })
     if (error) throw error
-    await addToAnnualSummary(user.id, y, { received_dividends: amount })
+    // 10〜12月権利確定は翌年3月ごろ支払い → 翌年の収入として計上
+    const paymentYear = m >= 10 ? y + 1 : y
+    await addToAnnualSummary(user.id, paymentYear, { received_dividends: amount })
     await fetchRecords()
   }
 

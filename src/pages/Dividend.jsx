@@ -103,7 +103,14 @@ export default function Dividend() {
 
     const list = filtered
       .filter(h => Number(h.stock?.dividend_rate || 0) > 0)
-      .sort((a, b) => (a.stock?.dividend_month || '').localeCompare(b.stock?.dividend_month || ''))
+      .sort((a, b) => {
+        const aMonth = a.stock?.dividend_month || ''
+        const bMonth = b.stock?.dividend_month || ''
+        const aIsPast = (aMonth.split('/')[0] || '') < currentYearStr
+        const bIsPast = (bMonth.split('/')[0] || '') < currentYearStr
+        if (aIsPast !== bIsPast) return aIsPast ? 1 : -1   // 過去年度は末尾へ
+        return aMonth.localeCompare(bMonth)
+      })
 
     return {
       monthlyData:     monthly,
@@ -217,6 +224,8 @@ export default function Dividend() {
                   const rec         = isCurrentYr ? getRecord(h.code, divMonth) : null
                   // 配当月表示: 当年かつ未確定のみ表示。確定済み・過去年度は「—」（次回権利月待ち）
                   const divMonthDisp = (isCurrentYr && !confirmed) ? divMonth : null
+                  // 過去年度: yfinance が次回権利日を未更新の状態
+                  const isPastYear = !isCurrentYr && (dmYear || '') < currentYearStr
                   const yutaiList   = getYutaiForCode(h.code)
                   const topYutai    = yutaiList[0] || null
 
@@ -230,7 +239,10 @@ export default function Dividend() {
                       <td className="px-4 py-3 text-right">{Number(h.quantity).toLocaleString('ja-JP')} 株</td>
                       <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(expected)}</td>
                       <td className="px-4 py-3 text-right text-slate-400 text-xs">
-                        {divMonthDisp || <span className="text-slate-300 dark:text-slate-600">—</span>}
+                        {isPastYear
+                          ? <span className="text-slate-300 dark:text-slate-600">次回更新待ち</span>
+                          : divMonthDisp || <span className="text-slate-300 dark:text-slate-600">—</span>
+                        }
                       </td>
 
                       {/* 優待列 */}
