@@ -1,13 +1,30 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../hooks/useAuth'
 
 export default function Login() {
   const navigate = useNavigate()
+  const { user, loading: authLoading } = useAuth()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
+
+  // ログイン済みならダッシュボードへ自動リダイレクト
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [user, authLoading, navigate])
+
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-dark-bg">
+        <div className="w-6 h-6 border-2 border-accent rounded-full animate-spin border-t-transparent" />
+      </div>
+    )
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()

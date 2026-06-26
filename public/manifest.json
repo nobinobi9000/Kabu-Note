@@ -2,7 +2,7 @@
   "name": "Kabu Note（カブノート）",
   "short_name": "カブノート",
   "description": "日本株ポートフォリオを一元管理するWebダッシュボード。複数証券会社の口座をまとめて損益・配当を可視化。",
-  "start_url": "/",
+  "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#10b981",
