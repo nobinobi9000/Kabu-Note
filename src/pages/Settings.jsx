@@ -144,6 +144,49 @@ function PasswordSection() {
   )
 }
 
+// ── アプリ更新 ───────────────────────────────────
+function AppUpdateSection() {
+  const [state, setState] = useState('idle') // idle | updating | done
+
+  async function handleUpdate() {
+    setState('updating')
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map(k => caches.delete(k)))
+      }
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(regs.map(r => r.update()))
+      }
+    } catch {}
+    setState('done')
+    setTimeout(() => window.location.reload(), 600)
+  }
+
+  return (
+    <Section title="アプリ">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">最新版に更新</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            キャッシュをクリアして最新のバージョンを読み込みます
+          </p>
+        </div>
+        <button
+          onClick={handleUpdate}
+          disabled={state !== 'idle'}
+          className="px-4 py-2 border border-accent text-accent text-sm rounded-lg hover:bg-accent/10 transition disabled:opacity-50"
+        >
+          {state === 'idle'     && 'アプリを更新'}
+          {state === 'updating' && '更新中...'}
+          {state === 'done'     && '再起動中...'}
+        </button>
+      </div>
+    </Section>
+  )
+}
+
 // ── アカウント削除 ────────────────────────────────
 function DangerSection() {
   const navigate                  = useNavigate()
@@ -234,6 +277,7 @@ export default function Settings() {
 
       <EmailSection currentEmail={user?.email ?? ''} />
       <PasswordSection />
+      <AppUpdateSection />
       <DangerSection />
     </div>
   )
