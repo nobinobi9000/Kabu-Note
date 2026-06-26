@@ -225,6 +225,79 @@ def main():
     ).execute()
     print(f"  {len(history_rows)} ユーザー分 UPSERT 完了")
 
+    # ── 5. 権利確定日を過ぎた配当のスナップショット ─────────────────────
+    # stocks更新直後のレートをロック。フロントのautoConfirmより先に実行することで
+    # yfinanceが次年度予想に切り替わる前の金額を捕捉する。
+    print("\n--- 配当スナップショット処理中 ---")
+    snapshot_created = 0
+
+    for h in holdings:
+        code    = h["code"]
+        user_id = h["user_id"]
+        stock   = stock_cache.get(code, {})
+
+        div_month_str = stock.get("dividend_month", "")  # "YYYY/MM"
+        div_rate      = float(stock.get("dividend_rate") or 0)
+
+        if not div_month_str or div_rate == 0:
+            continue
+
+        try:
+            year, month = [int(x) for x in div_month_str.split("/")]
+        except (ValueError, AttributeError):
+            continue
+
+        # 権利確定月の翌月1日より前はスキップ（まだ確定していない）
+        trigger = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        if today < trigger:
+            continue
+
+        # 既存レコードがあればスキップ（上書きしない）
+        existing = supabase.table("dividend_records") \
+            .select("id") \
+            .eq("user_id", user_id) \
+            .eq("code", code) \
+            .eq("year", year) \
+            .eq("month", month) \
+            .execute()
+        if existing.data:
+            continue
+
+        # スナップショット作成
+        quantity    = int(float(h["quantity"]))
+        amount      = round(div_rate * quantity)
+        payment_year = year + 1 if month >= 10 else year
+
+        supabase.table("dividend_records").insert({
+            "user_id":        user_id,
+            "code":           code,
+            "year":           year,
+            "month":          month,
+            "amount":         amount,
+            "quantity":       quantity,
+            "auto_confirmed": True,
+        }).execute()
+
+        # annual_summary に加算
+        summary = supabase.table("annual_summary") \
+            .select("realized_pnl, received_dividends") \
+            .eq("user_id", user_id) \
+            .eq("year", payment_year) \
+            .execute()
+        s = summary.data[0] if summary.data else None
+        supabase.table("annual_summary").upsert({
+            "user_id":            user_id,
+            "year":               payment_year,
+            "realized_pnl":       float(s["realized_pnl"] or 0) if s else 0,
+            "received_dividends": float(s["received_dividends"] or 0) if s else 0 + amount,
+            "updated_at":         now.isoformat(),
+        }, on_conflict="user_id,year").execute()
+
+        print(f"  スナップショット作成: {code} ({year}/{month}) {amount:,}円 → {payment_year}年収入 (user: {user_id[:8]}...)")
+        snapshot_created += 1
+
+    print(f"  スナップショット {snapshot_created} 件作成")
+
     print(f"\n--- 全処理完了 ---")
 
 

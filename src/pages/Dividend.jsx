@@ -7,6 +7,7 @@ import { useDividendRecords } from '../hooks/useDividendRecords'
 import { useYutai } from '../hooks/useYutai'
 import { yen } from '../lib/format'
 import YutaiModal from '../components/YutaiModal'
+import DividendAmountModal from '../components/DividendAmountModal'
 
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 
@@ -35,10 +36,11 @@ function Stars({ n }) {
 
 export default function Dividend() {
   const { filtered } = useBroker()
-  const { records, autoConfirm, manualConfirm, isConfirmed, getRecord } = useDividendRecords(filtered)
+  const { records, autoConfirm, manualConfirm, isConfirmed, getRecord, updateAmount } = useDividendRecords(filtered)
   const { records: yutaiRecords, addYutai, updateYutai, deleteYutai, getYutaiForCode } = useYutai()
 
   const [yutaiModal, setYutaiModal] = useState({ open: false, initial: null, defaultCode: '' })
+  const [dividendEditModal, setDividendEditModal] = useState({ open: false, record: null, stockName: '' })
 
   // 起動時に自動確定を実行
   useEffect(() => { autoConfirm() }, [autoConfirm])
@@ -125,6 +127,13 @@ export default function Dividend() {
 
   const annualDividend = annualConfirmed + annualForecast
   const annualTotal    = annualDividend + annualYutai
+
+  function openDividendEdit(rec, stockName) {
+    setDividendEditModal({ open: true, record: rec, stockName })
+  }
+  function closeDividendEdit() {
+    setDividendEditModal({ open: false, record: null, stockName: '' })
+  }
 
   function openAddYutai(code) {
     setYutaiModal({ open: true, initial: null, defaultCode: code })
@@ -215,6 +224,8 @@ export default function Dividend() {
                 {withDividend.map(h => {
                   const divRate    = Number(h.stock.dividend_rate)
                   const expected   = divRate * Number(h.quantity)
+                  // 確定済みは保存済みスナップショット額を使用。未確定はyfinance推定
+                  const displayAmount = (confirmed && rec) ? rec.amount : expected
                   const divMonth   = h.stock?.dividend_month          // "YYYY/MM"
                   const dmYear     = divMonth?.split('/')[0]
                   // 当年の dividend_month のみ確定チェック対象とする
@@ -237,7 +248,7 @@ export default function Dividend() {
                       <td className="px-4 py-3 font-medium max-w-[160px] truncate">{h.stock.name_ja}</td>
                       <td className="px-4 py-3 text-right">¥{divRate.toLocaleString('ja-JP')}</td>
                       <td className="px-4 py-3 text-right">{Number(h.quantity).toLocaleString('ja-JP')} 株</td>
-                      <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(expected)}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(displayAmount)}</td>
                       <td className="px-4 py-3 text-right text-slate-400 text-xs">
                         {isPastYear
                           ? <span className="text-slate-300 dark:text-slate-600">次回更新待ち</span>
@@ -273,9 +284,23 @@ export default function Dividend() {
                           // 過去年度: 次回権利月待ち（確定操作不可）
                           <span className="text-xs text-slate-300 dark:text-slate-600">—</span>
                         ) : confirmed ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-emerald-500">
-                            ✓{rec?.auto_confirmed && <span className="text-slate-400">自動</span>}
-                          </span>
+                          <div className="inline-flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 text-xs text-emerald-500">
+                              ✓
+                              {rec?.manually_adjusted
+                                ? <span className="text-slate-400">修正済</span>
+                                : rec?.auto_confirmed
+                                ? <span className="text-slate-400">自動</span>
+                                : null}
+                            </span>
+                            <button
+                              onClick={() => openDividendEdit(rec, h.stock.name_ja)}
+                              className="text-slate-300 dark:text-slate-600 hover:text-accent transition text-xs"
+                              title="金額を修正"
+                            >
+                              ✏️
+                            </button>
+                          </div>
                         ) : (
                           <button
                             onClick={() => manualConfirm(h)}
@@ -320,6 +345,15 @@ export default function Dividend() {
           </div>
         </div>
       )}
+
+      {/* 配当金額修正モーダル */}
+      <DividendAmountModal
+        open={dividendEditModal.open}
+        onClose={closeDividendEdit}
+        onSubmit={updateAmount}
+        record={dividendEditModal.record}
+        stockName={dividendEditModal.stockName}
+      />
 
       {/* 優待モーダル */}
       <YutaiModal

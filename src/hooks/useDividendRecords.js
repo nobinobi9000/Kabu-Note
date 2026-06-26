@@ -88,6 +88,23 @@ export function useDividendRecords(holdings = []) {
     await fetchRecords()
   }
 
+  // 確定済み金額を手動修正
+  async function updateAmount(recordId, newRatePerShare) {
+    const rec = records.find(r => r.id === recordId)
+    if (!rec) return
+    const newAmount = Math.round(newRatePerShare * rec.quantity)
+    const diff = newAmount - Number(rec.amount)
+    const paymentYear = rec.month >= 10 ? rec.year + 1 : rec.year
+
+    await supabase.from('dividend_records')
+      .update({ amount: newAmount, manually_adjusted: true })
+      .eq('id', recordId)
+      .eq('user_id', user.id)
+
+    await addToAnnualSummary(user.id, paymentYear, { received_dividends: diff })
+    await fetchRecords()
+  }
+
   // confirmed かどうか判定するヘルパー
   function isConfirmed(code, dividendMonth) {
     if (!dividendMonth) return false
@@ -101,5 +118,5 @@ export function useDividendRecords(holdings = []) {
     return records.find(r => r.code === code && r.year === y && r.month === m) || null
   }
 
-  return { records, autoConfirm, manualConfirm, isConfirmed, getRecord, refetch: fetchRecords }
+  return { records, autoConfirm, manualConfirm, isConfirmed, getRecord, updateAmount, refetch: fetchRecords }
 }
