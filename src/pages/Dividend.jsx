@@ -224,8 +224,6 @@ export default function Dividend() {
                 {withDividend.map(h => {
                   const divRate    = Number(h.stock.dividend_rate)
                   const expected   = divRate * Number(h.quantity)
-                  // 確定済みは保存済みスナップショット額を使用。未確定はyfinance推定
-                  const displayAmount = (confirmed && rec) ? rec.amount : expected
                   const divMonth   = h.stock?.dividend_month          // "YYYY/MM"
                   const dmYear     = divMonth?.split('/')[0]
                   // 当年の dividend_month のみ確定チェック対象とする
@@ -233,6 +231,8 @@ export default function Dividend() {
                   const isCurrentYr = dmYear === currentYearStr
                   const confirmed   = isCurrentYr && isConfirmed(h.code, divMonth)
                   const rec         = isCurrentYr ? getRecord(h.code, divMonth) : null
+                  // 確定済みは保存済みスナップショット額を使用。未確定はyfinance推定
+                  const displayAmount = (confirmed && rec) ? rec.amount : expected
                   // 配当月表示: 当年かつ未確定のみ表示。確定済み・過去年度は「—」（次回権利月待ち）
                   const divMonthDisp = (isCurrentYr && !confirmed) ? divMonth : null
                   // 過去年度: yfinance が次回権利日を未更新の状態
