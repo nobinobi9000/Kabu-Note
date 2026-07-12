@@ -11,6 +11,7 @@ import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import { yen, pnlYen, pct, diff } from '../lib/format'
 import ScreenerWidget from '../components/ScreenerWidget'
+import SplitEventBanner from '../components/SplitEventBanner'
 
 const RANGES = [
   { label: '30日', days: 30 },
@@ -94,6 +95,9 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+      {/* 株式分割・併合の確認バナー */}
+      <SplitEventBanner />
+
       {/* KPIカード */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <KpiCard label="総評価額" value={yen(totalMarket)} sub={cashBalance > 0 ? `現金 ${yen(cashBalance)} 含む` : undefined} />

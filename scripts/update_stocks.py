@@ -62,6 +62,21 @@ def get_dividend_month(ticker: yf.Ticker) -> str:
     return ""
 
 
+def get_splits(ticker: yf.Ticker) -> list:
+    """株式分割・併合履歴を [(date, ratio), ...] のリストで返す。ratio>1=分割、ratio<1=併合。"""
+    try:
+        splits = ticker.splits
+        if splits is None or splits.empty:
+            return []
+        result = []
+        for ts, ratio in splits.items():
+            d = ts.to_pydatetime().date() if hasattr(ts, "to_pydatetime") else ts
+            result.append((d, float(ratio)))
+        return result
+    except Exception:
+        return []
+
+
 def _translate(translator: GoogleTranslator, text: str) -> str:
     if not text:
         return ""
@@ -123,6 +138,7 @@ def fetch_stock_data(codes: list) -> dict:
                 "dividend_rate": info.get("dividendRate") or 0,
                 "dividend_month": get_dividend_month(tkr),
                 "currency":      info.get("currency") or "JPY",
+                "splits":        get_splits(tkr),
             }
             print(f"    ✅ {cache[code]['name_ja']}  終値={current_price}  前日差={price_change:+}")
 
@@ -132,10 +148,59 @@ def fetch_stock_data(codes: list) -> dict:
                 "name_ja": "", "name_en": "", "sector": "",
                 "price": 0, "price_change": 0,
                 "dividend_rate": 0, "dividend_month": "", "currency": "JPY",
+                "splits": [],
             }
         time.sleep(1)
 
     return cache
+
+
+# ==========================================
+# 株式分割・併合の検知
+# ==========================================
+
+def detect_stock_splits(supabase, holdings: list, stock_cache: dict) -> int:
+    """保有開始日より後の分割・併合イベントを検知し、pendingレコードを作成する。
+    holdings.quantity/cost_price はここでは書き換えない（ユーザー確認方式、原則: 財務データを無断で変更しない）。
+    """
+    created = 0
+    for h in holdings:
+        code    = h["code"]
+        splits  = stock_cache.get(code, {}).get("splits", [])
+        if not splits:
+            continue
+
+        holding_created = h["created_at"]
+        if isinstance(holding_created, str):
+            holding_created = datetime.fromisoformat(holding_created.replace("Z", "+00:00")).date()
+        elif hasattr(holding_created, "date"):
+            holding_created = holding_created.date()
+
+        for split_date, ratio in splits:
+            if split_date <= holding_created:
+                continue  # 保有開始前の分割は無視（購入時の株価に既に反映されている）
+
+            existing = supabase.table("stock_split_events") \
+                .select("id") \
+                .eq("holding_id", h["id"]) \
+                .eq("split_date", split_date.isoformat()) \
+                .execute()
+            if existing.data:
+                continue  # 既に検知済み
+
+            supabase.table("stock_split_events").insert({
+                "user_id":    h["user_id"],
+                "holding_id": h["id"],
+                "code":       code,
+                "split_date": split_date.isoformat(),
+                "ratio":      ratio,
+                "status":     "pending",
+            }).execute()
+            print(f"  検知: {code} {split_date} 比率{ratio} (holding_id={h['id'][:8]}...)")
+            created += 1
+
+    print(f"  新規検知 {created} 件")
+    return created
 
 
 # ==========================================
@@ -159,7 +224,7 @@ def main():
 
     # ── 1. holdings から全証券コードを取得 ──────────────────────────
     print("\n--- holdings 取得中 ---")
-    res = supabase.table("holdings").select("code, quantity, cost_price, user_id").execute()
+    res = supabase.table("holdings").select("id, code, quantity, cost_price, user_id, created_at").execute()
     holdings = res.data or []
 
     if not holdings:
@@ -225,7 +290,11 @@ def main():
     ).execute()
     print(f"  {len(history_rows)} ユーザー分 UPSERT 完了")
 
-    # ── 5. 権利確定日を過ぎた配当のスナップショット ─────────────────────
+    # ── 5. 株式分割・併合の検知（pendingレコード作成のみ、自動調整はしない）──
+    print("\n--- 株式分割・併合 検知中 ---")
+    detect_stock_splits(supabase, holdings, stock_cache)
+
+    # ── 6. 権利確定日を過ぎた配当のスナップショット ─────────────────────
     # stocks更新直後のレートをロック。フロントのautoConfirmより先に実行することで
     # yfinanceが次年度予想に切り替わる前の金額を捕捉する。
     print("\n--- 配当スナップショット処理中 ---")

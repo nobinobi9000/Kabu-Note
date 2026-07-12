@@ -6,6 +6,7 @@ import ResetPassword  from './pages/ResetPassword'
 import UpdatePassword from './pages/UpdatePassword'
 import Dashboard      from './pages/Dashboard'
 import Stocks         from './pages/Stocks'
+import Watchlist      from './pages/Watchlist'
 import Sector         from './pages/Sector'
 import Dividend       from './pages/Dividend'
 import Market         from './pages/Market'
@@ -40,6 +41,13 @@ export default function App() {
           <ProtectedRoute>
             <BrokerProvider>
               <Layout><Stocks /></Layout>
+            </BrokerProvider>
+          </ProtectedRoute>
+        } />
+        <Route path="/watchlist" element={
+          <ProtectedRoute>
+            <BrokerProvider>
+              <Layout><Watchlist /></Layout>
             </BrokerProvider>
           </ProtectedRoute>
         } />

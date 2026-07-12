@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useScreenerData } from '../hooks/useScreenerData'
+import { useWatchlist } from '../hooks/useWatchlist'
 
 const SCREENER_URL = 'https://nobi-labo.com/japan-stock-screener/'
 
@@ -19,8 +21,19 @@ function scoreColor(score) {
 
 export default function ScreenerWidget() {
   const { data, loading, error } = useScreenerData()
+  const { addToWatchlist, watchedCodes } = useWatchlist()
+  const [addingCode, setAddingCode] = useState(null)
 
   const isToday = data?.date === new Date().toISOString().slice(0, 10)
+
+  async function handleAddToWatchlist(stock) {
+    setAddingCode(stock.code)
+    try {
+      await addToWatchlist({ code: stock.code, name: stock.name, sector: stock.sector })
+    } finally {
+      setAddingCode(null)
+    }
+  }
 
   return (
     <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
@@ -87,6 +100,13 @@ export default function ScreenerWidget() {
                   </span>
                 )}
               </div>
+              <button
+                onClick={() => handleAddToWatchlist(stock)}
+                disabled={watchedCodes.has(stock.code) || addingCode === stock.code}
+                className="w-full mt-1 py-1 rounded text-[11px] font-medium border border-slate-200 dark:border-dark-border text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-default transition"
+              >
+                {watchedCodes.has(stock.code) ? '★ ウォッチ済み' : addingCode === stock.code ? '追加中...' : '☆ ウォッチに追加'}
+              </button>
             </div>
           ))}
         </div>

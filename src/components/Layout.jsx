@@ -6,6 +6,7 @@ import { useBroker } from '../context/BrokerContext'
 const NAV = [
   { to: '/dashboard', label: 'サマリー', icon: '▣', mobileIcon: '📊' },
   { to: '/stocks',    label: '個別銘柄', icon: '≡', mobileIcon: '📋' },
+  { to: '/watchlist', label: 'ウォッチ', icon: '★', mobileIcon: '⭐' },
   { to: '/sector',    label: 'セクター', icon: '◎', mobileIcon: '🍩' },
   { to: '/dividend',  label: '配当',     icon: '¥', mobileIcon: '💴' },
   { to: '/market',    label: '市場',     icon: '🌐', mobileIcon: '🌐' },
