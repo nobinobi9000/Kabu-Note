@@ -7,6 +7,8 @@ Kabu Note - 株価自動更新スクリプト
   2. yfinance でバッチ取得（企業名・株価・配当など）
   3. stocks テーブルを UPSERT
   4. ユーザーごとの日次資産を集計して daily_history テーブルを UPSERT
+  5. 株式分割・併合の検知
+  6. 配当履歴(stock_dividend_events)の同期・ユーザーごとの確定記録(dividend_records)作成
 """
 
 import os
@@ -26,6 +28,10 @@ from supabase import create_client
 # ==========================================
 SUFFIX = ".T"
 JST    = pytz.timezone("Asia/Tokyo")
+
+# 配当履歴の取得対象期間（これより前の配当は取得しない。年度別グラフ表示に
+# 必要な範囲＋バッファ）
+DIVIDEND_HISTORY_SINCE = date(2024, 1, 1)
 
 
 # ==========================================
@@ -50,6 +56,8 @@ def get_supabase_client():
 
 
 def get_dividend_month(ticker: yf.Ticker) -> str:
+    """参考表示用（Dashboard/Stocks画面の「配当額・配当月」列）。
+    確定記録(dividend_records)の作成にはこの値を使わない。"""
     try:
         dividends = ticker.dividends
         if dividends is not None and not dividends.empty:
@@ -60,6 +68,24 @@ def get_dividend_month(ticker: yf.Ticker) -> str:
     except Exception:
         pass
     return ""
+
+
+def get_dividend_history(ticker: yf.Ticker) -> list:
+    """配当履歴を [(ex_date, rate_per_share), ...] で返す（DIVIDEND_HISTORY_SINCE以降のみ）。
+    中間配当・期末配当など、同一銘柄内の複数の権利確定日を取りこぼさないよう、
+    最新の1件だけでなく全件を返す。"""
+    try:
+        dividends = ticker.dividends
+        if dividends is None or dividends.empty:
+            return []
+        result = []
+        for ts, rate in dividends.items():
+            d = ts.to_pydatetime().date() if hasattr(ts, "to_pydatetime") else ts
+            if d >= DIVIDEND_HISTORY_SINCE:
+                result.append((d, float(rate)))
+        return result
+    except Exception:
+        return []
 
 
 def get_splits(ticker: yf.Ticker) -> list:
@@ -137,6 +163,7 @@ def fetch_stock_data(codes: list) -> dict:
                 "price_change":  price_change,
                 "dividend_rate": info.get("dividendRate") or 0,
                 "dividend_month": get_dividend_month(tkr),
+                "dividend_history": get_dividend_history(tkr),
                 "currency":      info.get("currency") or "JPY",
                 "splits":        get_splits(tkr),
             }
@@ -147,7 +174,8 @@ def fetch_stock_data(codes: list) -> dict:
             cache[code] = {
                 "name_ja": "", "name_en": "", "sector": "",
                 "price": 0, "price_change": 0,
-                "dividend_rate": 0, "dividend_month": "", "currency": "JPY",
+                "dividend_rate": 0, "dividend_month": "", "dividend_history": [],
+                "currency": "JPY",
                 "splits": [],
             }
         time.sleep(1)
@@ -200,6 +228,103 @@ def detect_stock_splits(supabase, holdings: list, stock_cache: dict) -> int:
             created += 1
 
     print(f"  新規検知 {created} 件")
+    return created
+
+
+# ==========================================
+# 配当履歴の同期・ユーザーごとの確定記録作成
+# ==========================================
+
+def _add_to_annual_summary(supabase, user_id: str, year: int, received_dividends: float) -> None:
+    """annual_summary.received_dividends に加算する（既存行があれば加算、無ければ新規作成）。"""
+    existing = supabase.table("annual_summary") \
+        .select("realized_pnl, received_dividends") \
+        .eq("user_id", user_id).eq("year", year).maybe_single().execute()
+    s = existing.data
+    supabase.table("annual_summary").upsert({
+        "user_id":            user_id,
+        "year":               year,
+        "realized_pnl":       float(s["realized_pnl"]) if s else 0,
+        "received_dividends": (float(s["received_dividends"]) if s else 0) + received_dividends,
+        "updated_at":         datetime.now(JST).isoformat(),
+    }, on_conflict="user_id,year").execute()
+
+
+def sync_dividend_events(supabase, stock_cache: dict) -> list:
+    """stock_dividend_events(銘柄ごとの配当履歴、追記専用)を同期し、
+    新規に検知したイベントのリスト [(code, ex_date, rate), ...] を返す。"""
+    new_events = []
+    for code, data in stock_cache.items():
+        history = data.get("dividend_history", [])
+        if not history:
+            continue
+
+        existing = supabase.table("stock_dividend_events") \
+            .select("ex_date").eq("code", code).execute()
+        known_dates = {row["ex_date"] for row in (existing.data or [])}
+
+        for ex_date, rate in history:
+            ex_date_str = ex_date.isoformat()
+            if ex_date_str in known_dates:
+                continue
+            supabase.table("stock_dividend_events").insert({
+                "code":           code,
+                "ex_date":        ex_date_str,
+                "rate_per_share": rate,
+            }).execute()
+            new_events.append((code, ex_date, rate))
+            print(f"  新規配当イベント検知: {code} {ex_date_str} 1株{rate}円")
+
+    print(f"  新規配当イベント {len(new_events)} 件")
+    return new_events
+
+
+def create_dividend_snapshots(supabase, holdings: list, new_events: list) -> int:
+    """新規に検知した配当イベントについて、保有開始日より後であれば
+    その時点の保有株数でユーザーごとの確定記録(dividend_records)を作成する。
+    権利確定日から検知までのタイムラグを最短化することで、売却による
+    金額のズレ・全量売却による記録の消失を防ぐ。"""
+    if not new_events:
+        return 0
+
+    created = 0
+    for code, ex_date, rate in new_events:
+        for h in holdings:
+            if h["code"] != code:
+                continue
+
+            holding_created = h["created_at"]
+            if isinstance(holding_created, str):
+                holding_created = datetime.fromisoformat(holding_created.replace("Z", "+00:00")).date()
+            elif hasattr(holding_created, "date"):
+                holding_created = holding_created.date()
+
+            if ex_date <= holding_created:
+                continue  # 保有開始前の配当は対象外
+
+            quantity     = int(float(h["quantity"]))
+            amount       = round(rate * quantity)
+            payment_year = ex_date.year + 1 if ex_date.month >= 10 else ex_date.year
+
+            supabase.table("dividend_records").insert({
+                "user_id":        h["user_id"],
+                "code":           code,
+                "year":           ex_date.year,
+                "month":          ex_date.month,
+                "ex_date":        ex_date.isoformat(),
+                "payment_year":   payment_year,
+                "amount":         amount,
+                "quantity":       quantity,
+                "auto_confirmed": True,
+            }).execute()
+
+            _add_to_annual_summary(supabase, h["user_id"], payment_year, amount)
+
+            print(f"  確定記録作成: {code} ({ex_date.isoformat()}) {amount:,}円 → "
+                  f"{payment_year}年収入 (user: {h['user_id'][:8]}...)")
+            created += 1
+
+    print(f"  確定記録 {created} 件作成")
     return created
 
 
@@ -294,78 +419,10 @@ def main():
     print("\n--- 株式分割・併合 検知中 ---")
     detect_stock_splits(supabase, holdings, stock_cache)
 
-    # ── 6. 権利確定日を過ぎた配当のスナップショット ─────────────────────
-    # stocks更新直後のレートをロック。フロントのautoConfirmより先に実行することで
-    # yfinanceが次年度予想に切り替わる前の金額を捕捉する。
-    print("\n--- 配当スナップショット処理中 ---")
-    snapshot_created = 0
-
-    for h in holdings:
-        code    = h["code"]
-        user_id = h["user_id"]
-        stock   = stock_cache.get(code, {})
-
-        div_month_str = stock.get("dividend_month", "")  # "YYYY/MM"
-        div_rate      = float(stock.get("dividend_rate") or 0)
-
-        if not div_month_str or div_rate == 0:
-            continue
-
-        try:
-            year, month = [int(x) for x in div_month_str.split("/")]
-        except (ValueError, AttributeError):
-            continue
-
-        # 権利確定月の翌月1日より前はスキップ（まだ確定していない）
-        trigger = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-        if today < trigger:
-            continue
-
-        # 既存レコードがあればスキップ（上書きしない）
-        existing = supabase.table("dividend_records") \
-            .select("id") \
-            .eq("user_id", user_id) \
-            .eq("code", code) \
-            .eq("year", year) \
-            .eq("month", month) \
-            .execute()
-        if existing.data:
-            continue
-
-        # スナップショット作成
-        quantity    = int(float(h["quantity"]))
-        amount      = round(div_rate * quantity)
-        payment_year = year + 1 if month >= 10 else year
-
-        supabase.table("dividend_records").insert({
-            "user_id":        user_id,
-            "code":           code,
-            "year":           year,
-            "month":          month,
-            "amount":         amount,
-            "quantity":       quantity,
-            "auto_confirmed": True,
-        }).execute()
-
-        # annual_summary に加算
-        summary = supabase.table("annual_summary") \
-            .select("realized_pnl, received_dividends") \
-            .eq("user_id", user_id) \
-            .eq("year", payment_year) \
-            .execute()
-        s = summary.data[0] if summary.data else None
-        supabase.table("annual_summary").upsert({
-            "user_id":            user_id,
-            "year":               payment_year,
-            "realized_pnl":       float(s["realized_pnl"] or 0) if s else 0,
-            "received_dividends": float(s["received_dividends"] or 0) if s else 0 + amount,
-            "updated_at":         now.isoformat(),
-        }, on_conflict="user_id,year").execute()
-
-        print(f"  スナップショット作成: {code} ({year}/{month}) {amount:,}円 → {payment_year}年収入 (user: {user_id[:8]}...)")
-        snapshot_created += 1
-
-    print(f"  スナップショット {snapshot_created} 件作成")
+    # ── 6. 配当履歴の同期・ユーザーごとの確定記録作成 ─────────────────
+    print("\n--- 配当履歴の同期中 ---")
+    new_events = sync_dividend_events(supabase, stock_cache)
+    create_dividend_snapshots(supabase, holdings, new_events)
 
     print(f"\n--- 全処理完了 ---")
 

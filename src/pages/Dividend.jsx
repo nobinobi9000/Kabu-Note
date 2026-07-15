@@ -1,29 +1,13 @@
 import { useMemo, useEffect, useState } from 'react'
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
-} from 'recharts'
-import { useBroker } from '../context/BrokerContext'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useDividendRecords } from '../hooks/useDividendRecords'
 import { useYutai } from '../hooks/useYutai'
+import { supabase } from '../lib/supabase'
 import { yen } from '../lib/format'
 import YutaiModal from '../components/YutaiModal'
 import DividendAmountModal from '../components/DividendAmountModal'
 
-const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
-
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-lg p-3 text-xs shadow-lg">
-      <p className="text-slate-400 mb-1">{label}月</p>
-      {payload.map(p => p.value > 0 && (
-        <p key={p.dataKey} style={{ color: p.color }}>
-          {p.name}: {yen(p.value)}
-        </p>
-      ))}
-    </div>
-  )
-}
+const PIE_COLORS = ['#00ff88', '#00c2ff', '#f97316', '#a855f7', '#facc15', '#ef4444', '#64748b', '#22d3ee']
 
 function Stars({ n }) {
   if (!n) return <span className="text-slate-300 dark:text-slate-600">—</span>
@@ -34,102 +18,75 @@ function Stars({ n }) {
   )
 }
 
+function YearPie({ year, data }) {
+  const total = data.reduce((s, d) => s + d.value, 0)
+  return (
+    <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-semibold">{year}年</p>
+        <p className="text-sm font-bold text-accent">{yen(total)}</p>
+      </div>
+      {data.length === 0 ? (
+        <p className="text-center py-16 text-slate-400 text-xs">配当実績がありません</p>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={40} outerRadius={75} paddingAngle={2}>
+              {data.map((_, i) => (
+                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip formatter={(v) => yen(v)} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  )
+}
+
 export default function Dividend() {
-  const { filtered } = useBroker()
-  const { records, autoConfirm, manualConfirm, isConfirmed, getRecord, updateAmount } = useDividendRecords(filtered)
+  const { records, updateAmount } = useDividendRecords()
   const { records: yutaiRecords, addYutai, updateYutai, deleteYutai, getYutaiForCode } = useYutai()
 
   const [yutaiModal, setYutaiModal] = useState({ open: false, initial: null, defaultCode: '' })
   const [dividendEditModal, setDividendEditModal] = useState({ open: false, record: null, stockName: '' })
+  const [stockNames, setStockNames] = useState({})
 
-  // 起動時に自動確定を実行
-  useEffect(() => { autoConfirm() }, [autoConfirm])
-
-  const { monthlyData, annualConfirmed, annualForecast, annualYutai, withDividend,
-          currentYear, currentYearStr } = useMemo(() => {
-    const currentYear    = new Date().getFullYear()
-    const currentYearStr = String(currentYear)
-
-    const confirmedMap = {}
-    const forecastMap  = {}
-    const yutaiMap     = {}
-    MONTHS.forEach(m => {
-      confirmedMap[m] = 0
-      forecastMap[m]  = 0
-      yutaiMap[m]     = 0
-    })
-
-    // ── 確定済み: 当年の dividend_records から直接集計 ──────────────────
-    // 過去年度のレコードは含めず、記録時の実額（amount）を使用する
-    records
-      .filter(r => r.year === currentYear)
-      .forEach(r => {
-        const key = String(r.month).padStart(2, '0')
-        if (key in confirmedMap) {
-          confirmedMap[key] += Number(r.amount || 0)
-        }
+  // records に含まれる銘柄名を解決する（既に売却済みで filtered に無い銘柄も含むため
+  // stocks テーブルを直接引く）
+  useEffect(() => {
+    const codes = [...new Set(records.map(r => r.code))]
+    if (codes.length === 0) return
+    supabase.from('stocks').select('code, name_ja').in('code', codes)
+      .then(({ data }) => {
+        const map = {}
+        ;(data || []).forEach(s => { map[s.code] = s.name_ja })
+        setStockNames(map)
       })
+  }, [records])
 
-    // ── 予定: dividend_month が当年かつ未確定のみ ──────────────────────
-    // 過去年度の dividend_month（例 "2025/09"）は一切含めない
-    filtered.forEach(h => {
-      const divMonth = h.stock?.dividend_month   // "YYYY/MM"
-      const divRate  = Number(h.stock?.dividend_rate || 0)
-      if (!divMonth || divRate === 0) return
+  const currentYear = new Date().getFullYear()
+  const years = [currentYear - 1, currentYear, currentYear + 1]
 
-      const [yearStr, monthStr] = divMonth.split('/')
-      if (yearStr !== currentYearStr) return        // 当年以外はスキップ
-      if (isConfirmed(h.code, divMonth)) return     // 確定済みは上で処理済み
-
-      forecastMap[monthStr] = (forecastMap[monthStr] || 0) + divRate * Number(h.quantity)
+  const pieDataByYear = useMemo(() => {
+    const result = {}
+    years.forEach(y => {
+      const byCode = {}
+      records
+        .filter(r => r.payment_year === y)
+        .forEach(r => {
+          byCode[r.code] = (byCode[r.code] || 0) + Number(r.amount || 0)
+        })
+      result[y] = Object.entries(byCode)
+        .map(([code, value]) => ({ name: stockNames[code] || code, value }))
+        .sort((a, b) => b.value - a.value)
     })
+    return result
+  }, [records, stockNames, years])
 
-    // ── 優待集計 ────────────────────────────────────────────────────────
-    yutaiRecords.forEach(r => {
-      const key = String(r.month).padStart(2, '0')
-      if (key in yutaiMap) {
-        yutaiMap[key] = (yutaiMap[key] || 0) + Number(r.value_yen || 0)
-      }
-    })
-
-    const monthly = MONTHS.map(m => ({
-      month:     `${Number(m)}月`,
-      confirmed: confirmedMap[m],
-      forecast:  forecastMap[m],
-      yutai:     yutaiMap[m],
-    }))
-
-    const totalConfirmed = Object.values(confirmedMap).reduce((s, v) => s + v, 0)
-    const totalForecast  = Object.values(forecastMap).reduce((s, v) => s + v, 0)
-    const totalYutai     = Object.values(yutaiMap).reduce((s, v) => s + v, 0)
-
-    const list = filtered
-      .filter(h => Number(h.stock?.dividend_rate || 0) > 0)
-      .sort((a, b) => {
-        const aMonth = a.stock?.dividend_month || ''
-        const bMonth = b.stock?.dividend_month || ''
-        const aIsPast = (aMonth.split('/')[0] || '') < currentYearStr
-        const bIsPast = (bMonth.split('/')[0] || '') < currentYearStr
-        if (aIsPast !== bIsPast) return aIsPast ? 1 : -1   // 過去年度は末尾へ
-        return aMonth.localeCompare(bMonth)
-      })
-
-    return {
-      monthlyData:     monthly,
-      annualConfirmed: totalConfirmed,
-      annualForecast:  totalForecast,
-      annualYutai:     totalYutai,
-      withDividend:    list,
-      currentYear,
-      currentYearStr,
-    }
-  }, [filtered, records, yutaiRecords, isConfirmed])
-
-  const annualDividend = annualConfirmed + annualForecast
-  const annualTotal    = annualDividend + annualYutai
-
-  function openDividendEdit(rec, stockName) {
-    setDividendEditModal({ open: true, record: rec, stockName })
+  function openDividendEdit(rec) {
+    setDividendEditModal({ open: true, record: rec, stockName: stockNames[rec.code] || rec.code })
   }
   function closeDividendEdit() {
     setDividendEditModal({ open: false, record: null, stockName: '' })
@@ -157,106 +114,55 @@ export default function Dividend() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* 配当カレンダー */}
-      <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-sm font-semibold">配当・優待カレンダー</p>
-          <p className="text-sm font-bold text-accent">年間合計 {yen(annualTotal)}</p>
+      {/* 年度別 配当内訳（円グラフ） */}
+      <div>
+        <p className="text-sm font-semibold mb-3">年度別 配当実績（受取年ベース）</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {years.map(y => (
+            <YearPie key={y} year={y} data={pieDataByYear[y]} />
+          ))}
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-slate-400 mb-4">
-          <span>
-            <span className="inline-block w-2 h-2 rounded-sm bg-accent mr-1" />
-            配当（確定）{yen(annualConfirmed)}
-          </span>
-          <span>
-            <span className="inline-block w-2 h-2 rounded-sm bg-accent/30 mr-1" />
-            配当（予定）{yen(annualForecast)}
-          </span>
-          {annualYutai > 0 && (
-            <span>
-              <span className="inline-block w-2 h-2 rounded-sm bg-orange-400 mr-1" />
-              優待相当 {yen(annualYutai)}
-            </span>
-          )}
-        </div>
-        {annualDividend === 0 && annualYutai === 0 ? (
-          <p className="text-center py-16 text-slate-400 text-sm">配当データがありません（株価更新後に表示されます）</p>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={monthlyData} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e2d28" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#64748b' }} />
-              <YAxis tickFormatter={v => `¥${(v / 10000).toFixed(0)}万`} tick={{ fontSize: 10, fill: '#64748b' }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="confirmed" stackId="div" fill="#00ff88"   name="配当（確定）" radius={[0,0,0,0]} />
-              <Bar dataKey="forecast"  stackId="div" fill="#00ff8840" name="配当（予定）" radius={[0,0,0,0]} />
-              <Bar dataKey="yutai"     stackId="yut" fill="#f97316"   name="優待相当額"  radius={[3,3,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
       </div>
 
-      {/* 配当銘柄テーブル */}
+      {/* 配当実績テーブル */}
       <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-dark-border">
-          <p className="text-sm font-semibold">配当銘柄</p>
-          <p className="text-xs text-slate-400">{withDividend.length} 件</p>
+          <p className="text-sm font-semibold">配当実績（確定分のみ）</p>
+          <p className="text-xs text-slate-400">{records.length} 件</p>
         </div>
-        {withDividend.length === 0 ? (
-          <p className="text-center py-10 text-slate-400 text-sm">配当データがありません</p>
+        {records.length === 0 ? (
+          <p className="text-center py-10 text-slate-400 text-sm">
+            配当データがありません（権利確定・株価更新後に自動的に反映されます）
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm whitespace-nowrap">
               <thead>
                 <tr className="text-xs text-slate-400 uppercase border-b border-slate-100 dark:border-dark-border">
+                  <th className="px-4 py-2 text-left">権利確定日</th>
                   <th className="px-4 py-2 text-left">コード</th>
                   <th className="px-4 py-2 text-left">会社名</th>
-                  <th className="px-4 py-2 text-right">配当額（1株）</th>
                   <th className="px-4 py-2 text-right">保有株数</th>
-                  <th className="px-4 py-2 text-right">配当予定額</th>
-                  <th className="px-4 py-2 text-right">配当月</th>
+                  <th className="px-4 py-2 text-right">金額</th>
+                  <th className="px-4 py-2 text-right">受取年</th>
                   <th className="px-4 py-2 text-left">優待</th>
-                  <th className="px-4 py-2 text-left">証券会社</th>
-                  <th className="px-4 py-2 text-center">確定</th>
+                  <th className="px-4 py-2 text-center"></th>
                 </tr>
               </thead>
               <tbody>
-                {withDividend.map(h => {
-                  const divRate    = Number(h.stock.dividend_rate)
-                  const expected   = divRate * Number(h.quantity)
-                  const divMonth   = h.stock?.dividend_month          // "YYYY/MM"
-                  const dmYear     = divMonth?.split('/')[0]
-                  // 当年の dividend_month のみ確定チェック対象とする
-                  // 過去年度の場合は次回権利月が未確定扱い（yfinance 更新待ち）
-                  const isCurrentYr = dmYear === currentYearStr
-                  const confirmed   = isCurrentYr && isConfirmed(h.code, divMonth)
-                  const rec         = isCurrentYr ? getRecord(h.code, divMonth) : null
-                  // 確定済みは保存済みスナップショット額を使用。未確定はyfinance推定
-                  const displayAmount = (confirmed && rec) ? rec.amount : expected
-                  // 配当月表示: 当年かつ未確定のみ表示。確定済み・過去年度は「—」（次回権利月待ち）
-                  const divMonthDisp = (isCurrentYr && !confirmed) ? divMonth : null
-                  // 過去年度: yfinance が次回権利日を未更新の状態
-                  const isPastYear = !isCurrentYr && (dmYear || '') < currentYearStr
-                  const yutaiList   = getYutaiForCode(h.code)
-                  const topYutai    = yutaiList[0] || null
-
+                {records.map(rec => {
+                  const yutaiList = getYutaiForCode(rec.code)
+                  const topYutai  = yutaiList[0] || null
                   return (
-                    <tr key={h.id} className="border-b border-slate-50 dark:border-dark-border last:border-0 hover:bg-slate-50 dark:hover:bg-dark-bg/50">
+                    <tr key={rec.id} className="border-b border-slate-50 dark:border-dark-border last:border-0 hover:bg-slate-50 dark:hover:bg-dark-bg/50">
+                      <td className="px-4 py-3 text-slate-400 text-xs">{rec.ex_date || `${rec.year}/${String(rec.month).padStart(2, '0')}`}</td>
                       <td className="px-4 py-3">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-dark-border text-xs font-mono font-bold">{h.code}</span>
+                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-dark-border text-xs font-mono font-bold">{rec.code}</span>
                       </td>
-                      <td className="px-4 py-3 font-medium max-w-[160px] truncate">{h.stock.name_ja}</td>
-                      <td className="px-4 py-3 text-right">¥{divRate.toLocaleString('ja-JP')}</td>
-                      <td className="px-4 py-3 text-right">{Number(h.quantity).toLocaleString('ja-JP')} 株</td>
-                      <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(displayAmount)}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 text-xs">
-                        {isPastYear
-                          ? <span className="text-slate-300 dark:text-slate-600">次回更新待ち</span>
-                          : divMonthDisp || <span className="text-slate-300 dark:text-slate-600">—</span>
-                        }
-                      </td>
-
-                      {/* 優待列 */}
+                      <td className="px-4 py-3 font-medium max-w-[160px] truncate">{stockNames[rec.code] || rec.code}</td>
+                      <td className="px-4 py-3 text-right">{Number(rec.quantity).toLocaleString('ja-JP')} 株</td>
+                      <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(rec.amount)}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 text-xs">{rec.payment_year}年</td>
                       <td className="px-4 py-3 min-w-[160px]">
                         {topYutai ? (
                           <button
@@ -270,45 +176,31 @@ export default function Dividend() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => openAddYutai(h.code)}
+                            onClick={() => openAddYutai(rec.code)}
                             className="px-2 py-0.5 rounded text-xs border border-slate-200 dark:border-dark-border text-slate-400 hover:border-orange-400 hover:text-orange-400 transition"
                           >
                             + 優待を登録
                           </button>
                         )}
                       </td>
-
-                      <td className="px-4 py-3 text-slate-400 text-xs">{h.broker || '—'}</td>
                       <td className="px-4 py-3 text-center">
-                        {!isCurrentYr ? (
-                          // 過去年度: 次回権利月待ち（確定操作不可）
-                          <span className="text-xs text-slate-300 dark:text-slate-600">—</span>
-                        ) : confirmed ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-1 text-xs text-emerald-500">
-                              ✓
-                              {rec?.manually_adjusted
-                                ? <span className="text-slate-400">修正済</span>
-                                : rec?.auto_confirmed
-                                ? <span className="text-slate-400">自動</span>
-                                : null}
-                            </span>
-                            <button
-                              onClick={() => openDividendEdit(rec, h.stock.name_ja)}
-                              className="text-slate-300 dark:text-slate-600 hover:text-accent transition text-xs"
-                              title="金額を修正"
-                            >
-                              ✏️
-                            </button>
-                          </div>
-                        ) : (
+                        <div className="inline-flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-500">
+                            ✓
+                            {rec.manually_adjusted
+                              ? <span className="text-slate-400">修正済</span>
+                              : rec.auto_confirmed
+                              ? <span className="text-slate-400">自動</span>
+                              : null}
+                          </span>
                           <button
-                            onClick={() => manualConfirm(h)}
-                            className="px-2 py-0.5 rounded text-xs border border-slate-200 dark:border-dark-border text-slate-400 hover:border-emerald-500 hover:text-emerald-500 transition"
+                            onClick={() => openDividendEdit(rec)}
+                            className="text-slate-300 dark:text-slate-600 hover:text-accent transition text-xs"
+                            title="金額を修正"
                           >
-                            確定
+                            ✏️
                           </button>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -318,33 +210,6 @@ export default function Dividend() {
           </div>
         )}
       </div>
-
-      {/* 年間合計サマリー */}
-      {(annualDividend > 0 || annualYutai > 0) && (
-        <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
-          <p className="text-sm font-semibold mb-3">年間受取サマリー</p>
-          <div className="space-y-2 text-xs">
-            <div className="flex justify-between">
-              <span className="text-slate-400">配当（確定）</span>
-              <span className="font-semibold text-emerald-500">+{yen(annualConfirmed)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">配当（予定）</span>
-              <span className="font-semibold text-slate-500">+{yen(annualForecast)}</span>
-            </div>
-            {annualYutai > 0 && (
-              <div className="flex justify-between">
-                <span className="text-slate-400">優待相当額</span>
-                <span className="font-semibold text-orange-500">+{yen(annualYutai)}</span>
-              </div>
-            )}
-            <div className="flex justify-between pt-2 border-t border-slate-100 dark:border-dark-border">
-              <span className="font-semibold">合計</span>
-              <span className="font-bold text-emerald-500">+{yen(annualTotal)}</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 配当金額修正モーダル */}
       <DividendAmountModal
