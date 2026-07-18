@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useState } from 'react'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { useDividendRecords } from '../hooks/useDividendRecords'
 import { useYutai } from '../hooks/useYutai'
 import { supabase } from '../lib/supabase'
@@ -22,24 +22,52 @@ function YearPie({ year, data }) {
   const total = data.reduce((s, d) => s + d.value, 0)
   return (
     <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <p className="text-sm font-semibold">{year}年</p>
         <p className="text-sm font-bold text-accent">{yen(total)}</p>
       </div>
       {data.length === 0 ? (
         <p className="text-center py-16 text-slate-400 text-xs">配当実績がありません</p>
       ) : (
-        <ResponsiveContainer width="100%" height={200}>
-          <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" innerRadius={40} outerRadius={75} paddingAngle={2}>
-              {data.map((_, i) => (
-                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip formatter={(v) => yen(v)} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-          </PieChart>
-        </ResponsiveContainer>
+        <>
+          {/* 円グラフ本体には番号だけを表示し、銘柄名は下の一覧に出す
+              （銘柄数が多い/名前が長いとレイアウトが崩れるため） */}
+          <ResponsiveContainer width="100%" height={260}>
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={60}
+                outerRadius={110}
+                paddingAngle={2}
+                label={({ index }) => `${index + 1}`}
+                labelLine={false}
+              >
+                {data.map((_, i) => (
+                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value, _name, entry) => [yen(value), entry.payload.name]} />
+            </PieChart>
+          </ResponsiveContainer>
+
+          {/* 番号対応の銘柄一覧 */}
+          <div className="mt-3 space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {data.map((d, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span
+                  className="flex-none w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                  style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
+                >
+                  {i + 1}
+                </span>
+                <span className="flex-1 truncate">{d.name}</span>
+                <span className="flex-none font-semibold text-accent">{yen(d.value)}</span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   )
@@ -68,6 +96,7 @@ export default function Dividend() {
 
   const currentYear = new Date().getFullYear()
   const years = [currentYear - 1, currentYear, currentYear + 1]
+  const [activeYear, setActiveYear] = useState(currentYear)
 
   const pieDataByYear = useMemo(() => {
     const result = {}
@@ -114,14 +143,25 @@ export default function Dividend() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* 年度別 配当内訳（円グラフ） */}
+      {/* 年度別 配当内訳（円グラフ、タブ切り替え） */}
       <div>
         <p className="text-sm font-semibold mb-3">年度別 配当実績（受取年ベース）</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="flex gap-2 mb-3">
           {years.map(y => (
-            <YearPie key={y} year={y} data={pieDataByYear[y]} />
+            <button
+              key={y}
+              onClick={() => setActiveYear(y)}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                activeYear === y
+                  ? 'bg-accent text-dark-bg'
+                  : 'bg-slate-100 dark:bg-dark-card text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+              }`}
+            >
+              {y}年
+            </button>
           ))}
         </div>
+        <YearPie year={activeYear} data={pieDataByYear[activeYear]} />
       </div>
 
       {/* 配当実績テーブル */}
