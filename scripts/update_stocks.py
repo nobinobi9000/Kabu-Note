@@ -107,7 +107,14 @@ def _translate(translator: GoogleTranslator, text: str) -> str:
     if not text:
         return ""
     try:
-        return translator.translate(text) or text
+        result = translator.translate(text)
+        if not result:
+            return text
+        # deep_translator が HTTP 500 エラーページを翻訳結果として返す場合を除外
+        if "500" in result[:30] or result[:5] == "Error" or "That's an error" in result:
+            print(f"    ⚠️ 翻訳APIエラー検出、原文を使用: {text[:40]}")
+            return text
+        return result
     except Exception:
         return text
 
