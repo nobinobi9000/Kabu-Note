@@ -261,11 +261,15 @@ Kabu-Note/
 
 ```
 japan-stock-screener バッチ
-  → GitHub Pages: https://nobinobi9000.github.io/japan-stock-screener/latest.json
+  → raw.githubusercontent.com: https://raw.githubusercontent.com/nobinobi9000/japan-stock-screener/main/docs/latest.json
       → useScreenerData.js がfetch（1日1回 localStorageキャッシュ）
           → ScreenerWidget.jsx（ダッシュボード）
           → Market.jsx（市場マップ）
 ```
+
+> **[修正済み 2026-09-02]** 以前は GitHub Pages URL（`nobinobi9000.github.io/...`）を使用していたが、
+> 301リダイレクト先がCORSに非対応のためfetchが失敗していた。
+> `raw.githubusercontent.com` 経由（CORS `*` を返す）に変更して解決。
 
 **latest.json の形式:**
 ```json

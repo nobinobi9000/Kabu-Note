@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 
-// GitHub Pages に直接リクエストすることでリダイレクトを避け、CORS(*) を確実に受け取る
-const SCREENER_URL = 'https://nobinobi9000.github.io/japan-stock-screener/latest.json'
+// raw.githubusercontent.com 経由で取得することで 301 リダイレクト + CORS 問題を回避する
+// GitHub Pages URL は 301 → CORS 未対応のリダイレクト先に飛ぶため使用しない
+const SCREENER_URL = 'https://raw.githubusercontent.com/nobinobi9000/japan-stock-screener/main/docs/latest.json'
 const CACHE_KEY    = 'screener_latest'
 const CACHE_DATE_KEY = 'screener_latest_date'
 
