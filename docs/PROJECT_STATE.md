@@ -329,7 +329,21 @@ if today >= trigger and not existing_record:
 
 ### 5-4. kabu-signal との連携
 
-**現状:** 直接の連携なし。将来的に holdings データを参照する可能性があるが未実装。
+**現状:** kabu-signal のバッチ（`screener/user_matcher.py`）が Supabase の service_role key を使い、
+Kabu Note の以下のテーブルを直接読み取っている（Kabu Note のアプリコードを経由しないサーバー間連携）。
+
+| テーブル | 参照カラム | 用途 |
+|---------|----------|------|
+| `watchlist` | `user_id`, `code` | ウォッチリスト銘柄とシグナルを突合 |
+| `holdings` | `user_id`, `code`, `cost_price` | 保有銘柄の突合・損益アラート計算 |
+
+- 実行タイミング: 平日 21:00 JST（kabu-signal バッチ起動時）
+- アクセス権限: service_role（RLS をバイパスして全ユーザー分を一括取得）
+- **注意:** `watchlist`・`holdings` のカラム名を変更すると kabu-signal のバッチが即座に失敗するため、
+  変更時は必ず `kabu-signal/screener/user_matcher.py` を同時に修正すること
+
+**将来:** `pnl_alert_settings` テーブルへの書き込み UI が Kabu Note 側で未実装。
+kabu-signal 側は読み取り実装済みのため、UI を追加すれば損益アラート閾値の設定が可能になる。
 
 ---
 
