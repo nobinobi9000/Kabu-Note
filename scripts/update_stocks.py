@@ -29,6 +29,20 @@ from supabase import create_client
 SUFFIX = ".T"
 JST    = pytz.timezone("Asia/Tokyo")
 
+SECTOR_MAP = {
+    "Technology":             "テクノロジー",
+    "Financial Services":     "金融サービス",
+    "Communication Services": "通信サービス",
+    "Consumer Cyclical":      "一般消費財",
+    "Consumer Defensive":     "生活必需品",
+    "Healthcare":             "ヘルスケア",
+    "Industrials":            "資本財",
+    "Basic Materials":        "素材",
+    "Real Estate":            "不動産",
+    "Energy":                 "エネルギー",
+    "Utilities":              "公益事業",
+}
+
 # 配当履歴の取得対象期間（これより前の配当は取得しない。年度別グラフ表示に
 # 必要な範囲＋バッファ）
 DIVIDEND_HISTORY_SINCE = date(2024, 1, 1)
@@ -162,10 +176,11 @@ def fetch_stock_data(codes: list) -> dict:
             previous_close = fast.previous_close or 0
             price_change   = round(current_price - previous_close, 1)
 
+            sector_en = info.get("sector") or info.get("industry") or ""
             cache[code] = {
                 "name_ja":       get_formatted_name(translator, info),
                 "name_en":       info.get("longName") or info.get("shortName") or "",
-                "sector":        _translate(translator, info.get("sector") or info.get("industry") or ""),
+                "sector":        SECTOR_MAP.get(sector_en, sector_en),
                 "price":         current_price,
                 "price_change":  price_change,
                 "dividend_rate": info.get("dividendRate") or 0,
