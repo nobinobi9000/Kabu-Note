@@ -53,27 +53,43 @@ export function useHoldings() {
   useEffect(() => { fetch() }, [fetch])
 
   // 追加
-  async function addHolding({ code, quantity, cost_price, broker }) {
+  async function addHolding({ code, quantity, cost_price, broker, is_long_term, take_profit_pct, stop_loss_pct }) {
     const { error } = await supabase.from('holdings').insert({
-      user_id:    user.id,
-      code:       String(code).trim(),
-      quantity:   Number(quantity),
-      cost_price: Number(cost_price),
-      broker:     broker?.trim() || null,
+      user_id:         user.id,
+      code:            String(code).trim(),
+      quantity:        Number(quantity),
+      cost_price:      Number(cost_price),
+      broker:          broker?.trim() || null,
+      is_long_term:    Boolean(is_long_term),
+      take_profit_pct: take_profit_pct === null || take_profit_pct === undefined ? null : Number(take_profit_pct),
+      stop_loss_pct:   stop_loss_pct === null || stop_loss_pct === undefined ? null : Number(stop_loss_pct),
     })
     if (error) throw error
     await fetch()
   }
 
   // 更新
-  async function updateHolding(id, { quantity, cost_price, broker }) {
+  async function updateHolding(id, { quantity, cost_price, broker, is_long_term, take_profit_pct, stop_loss_pct }) {
     const { error } = await supabase.from('holdings')
       .update({
-        quantity:   Number(quantity),
-        cost_price: Number(cost_price),
-        broker:     broker?.trim() || null,
-        updated_at: new Date().toISOString(),
+        quantity:        Number(quantity),
+        cost_price:      Number(cost_price),
+        broker:          broker?.trim() || null,
+        is_long_term:    Boolean(is_long_term),
+        take_profit_pct: take_profit_pct === null || take_profit_pct === undefined ? null : Number(take_profit_pct),
+        stop_loss_pct:   stop_loss_pct === null || stop_loss_pct === undefined ? null : Number(stop_loss_pct),
+        updated_at:      new Date().toISOString(),
       })
+      .eq('id', id)
+      .eq('user_id', user.id)
+    if (error) throw error
+    await fetch()
+  }
+
+  // 保有目的の切り替え（一覧からのワンタップ用）
+  async function togglePurpose(id, isLongTerm) {
+    const { error } = await supabase.from('holdings')
+      .update({ is_long_term: isLongTerm, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('user_id', user.id)
     if (error) throw error
@@ -142,5 +158,5 @@ export function useHoldings() {
     await fetch()
   }
 
-  return { holdings, loading, error, refetch: fetch, addHolding, updateHolding, deleteHolding, sellHolding }
+  return { holdings, loading, error, refetch: fetch, addHolding, updateHolding, deleteHolding, sellHolding, togglePurpose }
 }

@@ -202,7 +202,14 @@ export default function Dividend() {
                       <td className="px-4 py-3 font-medium max-w-[160px] truncate">{stockNames[rec.code] || rec.code}</td>
                       <td className="px-4 py-3 text-right">{Number(rec.quantity).toLocaleString('ja-JP')} 株</td>
                       <td className="px-4 py-3 text-right font-semibold text-emerald-500">+{yen(rec.amount)}</td>
-                      <td className="px-4 py-3 text-right text-slate-400 text-xs">{rec.payment_year}年</td>
+                      <td className="px-4 py-3 text-right text-slate-400 text-xs">
+                        {rec.payment_year}年
+                        {rec.status === 'scheduled' && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-600 dark:text-amber-400">
+                            支払前
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 min-w-[160px]">
                         {topYutai ? (
                           <button

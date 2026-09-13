@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 import { yen } from '../lib/format'
 
 export default function DividendAmountModal({ open, onClose, onSubmit, record, stockName }) {
   const [ratePerShare, setRatePerShare] = useState('')
+  const [lagMonths, setLagMonths] = useState('')
+  const [initialLagMonths, setInitialLagMonths] = useState(null)
 
   useEffect(() => {
     if (open && record) {
@@ -10,6 +13,14 @@ export default function DividendAmountModal({ open, onClose, onSubmit, record, s
         ? Math.round((record.amount / record.quantity) * 100) / 100
         : 0
       setRatePerShare(String(r))
+
+      supabase.from('stocks').select('dividend_payment_lag_months')
+        .eq('code', record.code).maybeSingle()
+        .then(({ data }) => {
+          const lag = data?.dividend_payment_lag_months ?? 3
+          setLagMonths(String(lag))
+          setInitialLagMonths(lag)
+        })
     }
   }, [open, record])
 
@@ -18,10 +29,17 @@ export default function DividendAmountModal({ open, onClose, onSubmit, record, s
   const rate  = Number(ratePerShare) || 0
   const total = Math.round(rate * record.quantity)
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
     if (rate <= 0) return
     onSubmit(record.id, rate)
+
+    const newLag = Number(lagMonths)
+    if (newLag > 0 && newLag !== initialLagMonths) {
+      await supabase.from('stocks')
+        .update({ dividend_payment_lag_months: newLag })
+        .eq('code', record.code)
+    }
     onClose()
   }
 
@@ -51,6 +69,23 @@ export default function DividendAmountModal({ open, onClose, onSubmit, record, s
               />
               <span className="text-sm text-slate-400 whitespace-nowrap">円 / 株</span>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              権利確定日→支払日までのラグ（ヶ月）
+            </label>
+            <input
+              type="number"
+              step="1"
+              min="1"
+              value={lagMonths}
+              onChange={e => setLagMonths(e.target.value)}
+              className="w-24 px-3 py-2 rounded-lg border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-bg text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+            <p className="text-xs text-slate-400 mt-1">
+              {stockName}の今後の配当の受取年計算に使われます（過去の記録には影響しません）
+            </p>
           </div>
 
           <div className="bg-slate-50 dark:bg-dark-bg rounded-lg p-3 text-sm space-y-1.5">

@@ -24,7 +24,7 @@ function DiffCell({ value }) {
 }
 
 export default function Stocks() {
-  const { holdings, loading, error, addHolding, updateHolding, deleteHolding, sellHolding } = useHoldings()
+  const { holdings, loading, error, addHolding, updateHolding, deleteHolding, sellHolding, togglePurpose } = useHoldings()
 
   const [modal,   setModal]   = useState({ open: false, item: null })
   const [confirm, setConfirm] = useState({ open: false, id: null, name: '' })
@@ -126,6 +126,17 @@ export default function Stocks() {
                   {/* 会社名 */}
                   <td className="px-4 py-3 font-medium max-w-[180px] truncate">
                     {h.stock?.name_ja || <span className="text-slate-400 text-xs">取得待ち</span>}
+                    <button
+                      onClick={() => togglePurpose(h.id, !h.is_long_term)}
+                      title="クリックで保有目的の切り替え"
+                      className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-normal border transition ${
+                        h.is_long_term
+                          ? 'bg-slate-100 dark:bg-dark-border text-slate-500 dark:text-slate-300 border-slate-200 dark:border-dark-border'
+                          : 'text-slate-300 dark:text-slate-600 border-transparent hover:border-slate-200 dark:hover:border-dark-border'
+                      }`}
+                    >
+                      保有目的
+                    </button>
                   </td>
 
                   {/* 業種 */}

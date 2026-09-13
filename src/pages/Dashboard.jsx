@@ -49,6 +49,7 @@ export default function Dashboard() {
   const { user }    = useAuth()
   const { filtered } = useBroker()
   const [range, setRange]   = useState(30)
+  const [excludeLongTerm, setExcludeLongTerm] = useState(false)
   const { data: history, loading: histLoading } = useDailyHistory(range)
   const { transactions }  = useTransactions()
   const { summaries }     = useAnnualSummary()
@@ -61,9 +62,11 @@ export default function Dashboard() {
       .then(({ data }) => setCashBalance(data?.cash_balance || 0))
   }, [user])
 
-  // KPI集計（現金含む）
-  const totalMarket = filtered.reduce((s, h) => s + (h.mktVal || 0), 0) + cashBalance
-  const totalCost   = filtered.reduce((s, h) => s + (h.costVal || 0), 0)
+  // KPI集計（現金含む）。「保有目的を除く」ONの場合、is_long_termの銘柄を
+  // 集計から外し、売買目的だけの実質損益を見られるようにする。
+  const pnlTargets = excludeLongTerm ? filtered.filter(h => !h.is_long_term) : filtered
+  const totalMarket = pnlTargets.reduce((s, h) => s + (h.mktVal || 0), 0) + cashBalance
+  const totalCost   = pnlTargets.reduce((s, h) => s + (h.costVal || 0), 0)
   const totalPnl    = totalMarket - totalCost - cashBalance  // 含み損益（現金除く）
   const pnlRate     = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0
 
@@ -97,6 +100,17 @@ export default function Dashboard() {
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* 株式分割・併合の確認バナー */}
       <SplitEventBanner />
+
+      {/* 保有目的を除くトグル */}
+      <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer w-fit">
+        <input
+          type="checkbox"
+          checked={excludeLongTerm}
+          onChange={e => setExcludeLongTerm(e.target.checked)}
+          className="w-3.5 h-3.5 rounded border-slate-300 dark:border-dark-border text-accent focus:ring-accent"
+        />
+        保有目的の銘柄を除く（売買目的だけの損益を見る）
+      </label>
 
       {/* KPIカード */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
@@ -233,6 +247,11 @@ export default function Dashboard() {
                     </td>
                     <td className="px-4 py-3 font-medium max-w-[160px] truncate">
                       {h.stock?.name_ja || <span className="text-slate-400 text-xs">取得待ち</span>}
+                      {h.is_long_term && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-normal bg-slate-100 dark:bg-dark-border text-slate-400" title="保有目的">
+                          保有目的
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {h.stock?.sector

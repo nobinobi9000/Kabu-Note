@@ -11,6 +11,7 @@ Kabu Note - 株価自動更新スクリプト
   6. 配当履歴(stock_dividend_events)の同期・ユーザーごとの確定記録(dividend_records)作成
 """
 
+import calendar
 import os
 import re
 import time
@@ -272,6 +273,46 @@ def _add_to_annual_summary(supabase, user_id: str, year: int, received_dividends
     }, on_conflict="user_id,year").execute()
 
 
+DEFAULT_DIVIDEND_PAYMENT_LAG_MONTHS = 3  # 会社ごとの設定が無い場合の既定ラグ(月)
+
+
+def add_months(d: date, months: int) -> date:
+    """dにmonthsヶ月を加算した日付を返す（月末日のはみ出しはその月の末日に丸める）。"""
+    total = d.month - 1 + months
+    year  = d.year + total // 12
+    month = total % 12 + 1
+    day   = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def get_dividend_payment_lags(supabase, codes: list) -> dict:
+    """stocksテーブルから会社ごとの配当支払ラグ(月)を取得する。
+    未登録銘柄はDEFAULT_DIVIDEND_PAYMENT_LAG_MONTHSを使う。"""
+    if not codes:
+        return {}
+    res = supabase.table("stocks").select("code, dividend_payment_lag_months") \
+        .in_("code", codes).execute()
+    return {row["code"]: row.get("dividend_payment_lag_months") or DEFAULT_DIVIDEND_PAYMENT_LAG_MONTHS
+            for row in (res.data or [])}
+
+
+def refresh_dividend_status(supabase, today: date) -> int:
+    """推定支払日(payment_date)を過ぎた scheduled レコードを confirmed に更新する
+    (2026-09-13追加。年をまたぐ配当の受取年管理を正しく行うための状態遷移)。"""
+    res = supabase.table("dividend_records") \
+        .select("id") \
+        .eq("status", "scheduled") \
+        .lte("payment_date", today.isoformat()) \
+        .execute()
+    ids = [row["id"] for row in (res.data or [])]
+    if not ids:
+        return 0
+    supabase.table("dividend_records").update({"status": "confirmed"}) \
+        .in_("id", ids).execute()
+    print(f"  scheduled→confirmed に更新: {len(ids)} 件")
+    return len(ids)
+
+
 def sync_dividend_events(supabase, stock_cache: dict) -> list:
     """stock_dividend_events(銘柄ごとの配当履歴、追記専用)を同期し、
     新規に検知したイベントのリスト [(code, ex_date, rate), ...] を返す。"""
@@ -301,13 +342,23 @@ def sync_dividend_events(supabase, stock_cache: dict) -> list:
     return new_events
 
 
-def create_dividend_snapshots(supabase, holdings: list, new_events: list) -> int:
+def create_dividend_snapshots(supabase, holdings: list, new_events: list, today: date) -> int:
     """新規に検知した配当イベントについて、保有開始日より後であれば
     その時点の保有株数でユーザーごとの確定記録(dividend_records)を作成する。
     権利確定日から検知までのタイムラグを最短化することで、売却による
-    金額のズレ・全量売却による記録の消失を防ぐ。"""
+    金額のズレ・全量売却による記録の消失を防ぐ。
+
+    受取年(payment_year)は、以前は「権利確定日が10月以降なら翌年」という
+    全銘柄共通の固定ルールで推測していたが、会社ごとに配当支払日までの
+    タイムラグ(2〜3ヶ月程度)が異なるため誤分類が起きていた。会社ごとの
+    ラグ(stocks.dividend_payment_lag_months)から推定支払日(payment_date)を
+    算出し、そのyearをpayment_yearとする(2026-09-13、根本原因の修正)。
+    支払日が未到来のものはstatus='scheduled'として区別し、実際に支払日を
+    過ぎたら refresh_dividend_status() が'confirmed'に更新する。"""
     if not new_events:
         return 0
+
+    lag_by_code = get_dividend_payment_lags(supabase, list({code for code, _, _ in new_events}))
 
     created = 0
     for code, ex_date, rate in new_events:
@@ -326,7 +377,10 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list) -> int
 
             quantity     = int(float(h["quantity"]))
             amount       = round(rate * quantity)
-            payment_year = ex_date.year + 1 if ex_date.month >= 10 else ex_date.year
+            lag_months   = lag_by_code.get(code, DEFAULT_DIVIDEND_PAYMENT_LAG_MONTHS)
+            payment_date = add_months(ex_date, lag_months)
+            payment_year = payment_date.year
+            status       = "scheduled" if payment_date > today else "confirmed"
 
             supabase.table("dividend_records").insert({
                 "user_id":        h["user_id"],
@@ -334,7 +388,9 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list) -> int
                 "year":           ex_date.year,
                 "month":          ex_date.month,
                 "ex_date":        ex_date.isoformat(),
+                "payment_date":   payment_date.isoformat(),
                 "payment_year":   payment_year,
+                "status":         status,
                 "amount":         amount,
                 "quantity":       quantity,
                 "auto_confirmed": True,
@@ -343,7 +399,8 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list) -> int
             _add_to_annual_summary(supabase, h["user_id"], payment_year, amount)
 
             print(f"  確定記録作成: {code} ({ex_date.isoformat()}) {amount:,}円 → "
-                  f"{payment_year}年収入 (user: {h['user_id'][:8]}...)")
+                  f"{payment_year}年収入・推定支払日{payment_date.isoformat()}({status}) "
+                  f"(user: {h['user_id'][:8]}...)")
             created += 1
 
     print(f"  確定記録 {created} 件作成")
@@ -444,7 +501,8 @@ def main():
     # ── 6. 配当履歴の同期・ユーザーごとの確定記録作成 ─────────────────
     print("\n--- 配当履歴の同期中 ---")
     new_events = sync_dividend_events(supabase, stock_cache)
-    create_dividend_snapshots(supabase, holdings, new_events)
+    create_dividend_snapshots(supabase, holdings, new_events, today)
+    refresh_dividend_status(supabase, today)
 
     print(f"\n--- 全処理完了 ---")
 

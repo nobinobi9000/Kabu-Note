@@ -4,12 +4,15 @@ const FIELD = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-d
 
 export default function HoldingModal({ open, onClose, onSubmit, initial }) {
   const isEdit = Boolean(initial)
-  const [code,       setCode]       = useState('')
-  const [quantity,   setQuantity]   = useState('')
-  const [costPrice,  setCostPrice]  = useState('')
-  const [broker,     setBroker]     = useState('')
-  const [loading,    setLoading]    = useState(false)
-  const [error,      setError]      = useState('')
+  const [code,         setCode]         = useState('')
+  const [quantity,     setQuantity]     = useState('')
+  const [costPrice,    setCostPrice]    = useState('')
+  const [broker,       setBroker]       = useState('')
+  const [isLongTerm,   setIsLongTerm]   = useState(false)
+  const [takeProfitPct, setTakeProfitPct] = useState('')
+  const [stopLossPct,   setStopLossPct]   = useState('')
+  const [loading,      setLoading]      = useState(false)
+  const [error,        setError]        = useState('')
 
   useEffect(() => {
     if (open) {
@@ -17,6 +20,9 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
       setQuantity(initial?.quantity ?? '')
       setCostPrice(initial?.cost_price ?? '')
       setBroker(initial?.broker ?? '')
+      setIsLongTerm(initial?.is_long_term ?? false)
+      setTakeProfitPct(initial?.take_profit_pct ?? '')
+      setStopLossPct(initial?.stop_loss_pct ?? '')
       setError('')
     }
   }, [open, initial])
@@ -30,7 +36,12 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
     }
     setLoading(true)
     try {
-      await onSubmit({ code, quantity, cost_price: costPrice, broker })
+      await onSubmit({
+        code, quantity, cost_price: costPrice, broker,
+        is_long_term: isLongTerm,
+        take_profit_pct: takeProfitPct === '' ? null : takeProfitPct,
+        stop_loss_pct: stopLossPct === '' ? null : stopLossPct,
+      })
       onClose()
     } catch (e) {
       setError(e.message)
@@ -108,6 +119,47 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
               value={broker} onChange={e => setBroker(e.target.value)}
               className={FIELD}
             />
+          </div>
+
+          {/* 保有目的 */}
+          <div>
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isLongTerm}
+                onChange={e => setIsLongTerm(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 dark:border-dark-border text-accent focus:ring-accent"
+              />
+              保有目的（長期保有・配当狙いなど）
+            </label>
+            <p className="text-xs text-slate-400 mt-1">
+              チェックすると、損益一覧の「保有目的を除く」表示で対象外にできます
+            </p>
+          </div>
+
+          {/* kabu-signal 個別売買設定（任意） */}
+          <div className="pt-1 border-t border-slate-100 dark:border-dark-border">
+            <p className="text-xs text-slate-400 mb-2 mt-3">
+              kabu-signal通知設定（空欄なら一括設定を使用）
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1">利確 %</label>
+                <input
+                  type="number" min="0" step="any" placeholder="例: 20"
+                  value={takeProfitPct} onChange={e => setTakeProfitPct(e.target.value)}
+                  className={FIELD}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">損切り %</label>
+                <input
+                  type="number" min="0" step="any" placeholder="例: 8"
+                  value={stopLossPct} onChange={e => setStopLossPct(e.target.value)}
+                  className={FIELD}
+                />
+              </div>
+            </div>
           </div>
 
           {/* ボタン */}
