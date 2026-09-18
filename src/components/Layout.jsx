@@ -18,10 +18,12 @@ const NAV_BOTTOM = [
   { to: '/settings', label: '個人設定', icon: '⚙️' },
 ]
 
-// モバイル用ボトムナビ: 常に4ボタン。トップレベルでは[ホーム|保有銘柄|市場|個人設定]、
-// 保有銘柄・市場セクションに入るとその4ボタンがセクション専用のサブメニューに切り替わる
-// (2026-09-19訂正: 各セクションの「ホーム」はそのセクション自身のランディングページを指す。
-// 全体のホーム(資産状況画面)へは、ヘッダーの「Kabu Note」ロゴをタップして戻る)。
+// モバイル用ボトムナビ。
+// トップレベル(4ボタン): ホーム/保有銘柄/市場/個人設定
+// 保有銘柄・市場セクションに入ると5ボタンになり、先頭に「戻る」(全体ホームへ)が付く。
+// 個人設定は独立セクション扱いで「戻る」1つだけ(2026-09-19、ユーザー指定の表に合わせて確定)。
+const BACK_TAB = { to: '/dashboard', label: '戻る', icon: '←' }
+
 const MOBILE_TOP_LEVEL = [
   { to: '/dashboard', label: 'ホーム',   icon: '🏠' },
   { to: '/stocks',    label: '保有銘柄', icon: '📋' },
@@ -33,7 +35,8 @@ const SECTIONS = {
   holdings: {
     paths: ['/stocks', '/sector', '/dividend'],
     tabs: [
-      { to: '/stocks',   label: 'ホーム',   icon: '📋' },
+      BACK_TAB,
+      { to: '/stocks',   label: '保有銘柄', icon: '📋' },
       { to: '/sector',   label: 'セクター', icon: '🍩' },
       { to: '/dividend', label: '配当',     icon: '💴' },
       { to: '/settings', label: '個人設定', icon: '⚙️' },
@@ -42,11 +45,16 @@ const SECTIONS = {
   market: {
     paths: ['/market', '/pickup', '/watchlist'],
     tabs: [
-      { to: '/market',    label: 'ホーム',   icon: '🌐' },
+      BACK_TAB,
+      { to: '/market',    label: '市場',     icon: '🌐' },
       { to: '/pickup',    label: 'pickup',   icon: '🎯' },
       { to: '/watchlist', label: 'ウォッチ', icon: '⭐' },
       { to: '/settings',  label: '個人設定', icon: '⚙️' },
     ],
+  },
+  settings: {
+    paths: ['/settings'],
+    tabs: [BACK_TAB],
   },
 }
 
@@ -62,16 +70,9 @@ function findSection(pathname) {
   return null
 }
 
-// /settingsは保有銘柄・市場どちらから開いたかでサブメニューの中身を変えたいので、
-// 直前にいたセクションを覚えておき、/settings表示中もそのセクションのタブを保つ
-// (2026-09-19)。どちらのセクションからも来ていなければトップレベル4ボタンを見せる。
-function currentMobileTabs(pathname, lastSectionKey) {
+function currentMobileTabs(pathname) {
   const key = findSection(pathname)
-  if (key) return SECTIONS[key].tabs
-  if (pathname === '/settings' && lastSectionKey && SECTIONS[lastSectionKey]) {
-    return SECTIONS[lastSectionKey].tabs
-  }
-  return MOBILE_TOP_LEVEL
+  return key ? SECTIONS[key].tabs : MOBILE_TOP_LEVEL
 }
 
 export default function Layout({ children }) {
@@ -89,22 +90,13 @@ export default function Layout({ children }) {
     localStorage.setItem('theme', dark ? 'dark' : 'light')
   }, [dark])
 
-  // 直前にいたセクション(保有銘柄/市場)を覚えておき、/settingsを開いてもそのセクションの
-  // サブメニューを保つ(2026-09-19)
-  const [lastSectionKey, setLastSectionKey] = useState(null)
-  useEffect(() => {
-    const key = findSection(location.pathname)
-    if (key) setLastSectionKey(key)
-  }, [location.pathname])
-
   async function handleLogout() {
     await supabase.auth.signOut()
     navigate('/')
   }
 
-  const inSection = Boolean(findSection(location.pathname)) ||
-    (location.pathname === '/settings' && lastSectionKey)
-  const mobileTabs = currentMobileTabs(location.pathname, lastSectionKey)
+  const inSection = Boolean(findSection(location.pathname))
+  const mobileTabs = currentMobileTabs(location.pathname)
   const showBrokerFilter = brokers.length > 0 && BROKER_FILTER_PATHS.has(location.pathname)
 
   return (
