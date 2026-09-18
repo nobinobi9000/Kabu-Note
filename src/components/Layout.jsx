@@ -18,35 +18,34 @@ const NAV_BOTTOM = [
   { to: '/settings', label: '個人設定', icon: '⚙️' },
 ]
 
-// モバイル用ボトムナビ: 常に4ボタン。左端は常に「全体のホーム」に固定し、
-// 保有銘柄・市場セクションの中にいる間は残り3枠がそのセクション専用の
-// サブメニューに切り替わる(2026-09-18、メニュー数が多すぎる問題への対応)。
-const HOME_TAB = { to: '/dashboard', label: 'ホーム', icon: '🏠' }
-
+// モバイル用ボトムナビ: 常に4ボタン。トップレベルでは[ホーム|保有銘柄|市場|個人設定]、
+// 保有銘柄・市場セクションに入るとその4ボタンがセクション専用のサブメニューに切り替わる
+// (2026-09-19訂正: 各セクションの「ホーム」はそのセクション自身のランディングページを指す。
+// 全体のホーム(資産状況画面)へは、ヘッダーの「Kabu Note」ロゴをタップして戻る)。
 const MOBILE_TOP_LEVEL = [
-  HOME_TAB,
-  { to: '/stocks',   label: '保有銘柄', icon: '📋' },
-  { to: '/market',   label: '市場',     icon: '🌐' },
-  { to: '/settings', label: '個人設定', icon: '⚙️' },
+  { to: '/dashboard', label: 'ホーム',   icon: '🏠' },
+  { to: '/stocks',    label: '保有銘柄', icon: '📋' },
+  { to: '/market',    label: '市場',     icon: '🌐' },
+  { to: '/settings',  label: '個人設定', icon: '⚙️' },
 ]
 
 const SECTIONS = {
   holdings: {
     paths: ['/stocks', '/sector', '/dividend'],
     tabs: [
-      HOME_TAB,
-      { to: '/stocks',   label: '保有一覧', icon: '📋' },
+      { to: '/stocks',   label: 'ホーム',   icon: '📋' },
       { to: '/sector',   label: 'セクター', icon: '🍩' },
       { to: '/dividend', label: '配当',     icon: '💴' },
+      { to: '/settings', label: '個人設定', icon: '⚙️' },
     ],
   },
   market: {
     paths: ['/market', '/pickup', '/watchlist'],
     tabs: [
-      HOME_TAB,
-      { to: '/market',    label: '市場',     icon: '🌐' },
+      { to: '/market',    label: 'ホーム',   icon: '🌐' },
       { to: '/pickup',    label: 'pickup',   icon: '🎯' },
       { to: '/watchlist', label: 'ウォッチ', icon: '⭐' },
+      { to: '/settings',  label: '個人設定', icon: '⚙️' },
     ],
   },
 }
@@ -56,9 +55,21 @@ const SECTIONS = {
 // (2026-09-18、個人設定に誤って表示されていた不具合の修正)。
 const BROKER_FILTER_PATHS = new Set(['/dashboard', '/stocks', '/sector', '/dividend'])
 
-function currentMobileTabs(pathname) {
-  for (const section of Object.values(SECTIONS)) {
-    if (section.paths.includes(pathname)) return section.tabs
+function findSection(pathname) {
+  for (const [key, section] of Object.entries(SECTIONS)) {
+    if (section.paths.includes(pathname)) return key
+  }
+  return null
+}
+
+// /settingsは保有銘柄・市場どちらから開いたかでサブメニューの中身を変えたいので、
+// 直前にいたセクションを覚えておき、/settings表示中もそのセクションのタブを保つ
+// (2026-09-19)。どちらのセクションからも来ていなければトップレベル4ボタンを見せる。
+function currentMobileTabs(pathname, lastSectionKey) {
+  const key = findSection(pathname)
+  if (key) return SECTIONS[key].tabs
+  if (pathname === '/settings' && lastSectionKey && SECTIONS[lastSectionKey]) {
+    return SECTIONS[lastSectionKey].tabs
   }
   return MOBILE_TOP_LEVEL
 }
@@ -78,12 +89,22 @@ export default function Layout({ children }) {
     localStorage.setItem('theme', dark ? 'dark' : 'light')
   }, [dark])
 
+  // 直前にいたセクション(保有銘柄/市場)を覚えておき、/settingsを開いてもそのセクションの
+  // サブメニューを保つ(2026-09-19)
+  const [lastSectionKey, setLastSectionKey] = useState(null)
+  useEffect(() => {
+    const key = findSection(location.pathname)
+    if (key) setLastSectionKey(key)
+  }, [location.pathname])
+
   async function handleLogout() {
     await supabase.auth.signOut()
     navigate('/')
   }
 
-  const mobileTabs = currentMobileTabs(location.pathname)
+  const inSection = Boolean(findSection(location.pathname)) ||
+    (location.pathname === '/settings' && lastSectionKey)
+  const mobileTabs = currentMobileTabs(location.pathname, lastSectionKey)
   const showBrokerFilter = brokers.length > 0 && BROKER_FILTER_PATHS.has(location.pathname)
 
   return (
@@ -146,28 +167,17 @@ export default function Layout({ children }) {
       {/* ━━━ メインエリア ━━━ */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* モバイル用トップバー（md未満のみ表示） */}
+        {/* モバイル用トップバー（md未満のみ表示）。ロゴタップで常に全体ホームへ戻る */}
         <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white dark:bg-dark-card border-b border-slate-200 dark:border-dark-border flex-shrink-0">
-          <p className="text-base font-bold text-accent">Kabu Note</p>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setDark(d => !d)}
-              className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-dark-bg transition text-sm"
-            >
-              {dark ? '☀️' : '🌙'}
-            </button>
-            {/* 個人設定はセクションのサブメニューに含めず、ここから常時アクセスできるようにする */}
-            <NavLink
-              to="/settings"
-              className={({ isActive }) =>
-                `p-2 rounded-lg text-sm transition ${
-                  isActive ? 'text-accent' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-dark-bg'
-                }`
-              }
-            >
-              ⚙️
-            </NavLink>
-          </div>
+          <button onClick={() => navigate('/dashboard')} className="text-base font-bold text-accent">
+            Kabu Note
+          </button>
+          <button
+            onClick={() => setDark(d => !d)}
+            className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-dark-bg transition text-sm"
+          >
+            {dark ? '☀️' : '🌙'}
+          </button>
         </header>
 
         {/* ブローカーフィルター（ホーム・保有銘柄セクションのみ） */}
@@ -195,15 +205,24 @@ export default function Layout({ children }) {
         </main>
       </div>
 
-      {/* ━━━ ボトムナビ（md未満のみ表示）: 常に4ボタン、左端は常に全体ホーム ━━━ */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-dark-card border-t border-slate-200 dark:border-dark-border flex safe-bottom">
+      {/* ━━━ ボトムナビ（md未満のみ表示）: 常に4ボタン ━━━
+          保有銘柄/市場セクションに入るとタブの中身が切り替わるため、切り替わった
+          ことが一目で分かるよう、セクション中は上端の縁取りとアクティブタブの
+          見た目を明るく変える(2026-09-19、ユーザー要望) */}
+      <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-dark-card flex safe-bottom transition-colors ${
+        inSection ? 'border-t-2 border-accent' : 'border-t border-slate-200 dark:border-dark-border'
+      }`}>
         {mobileTabs.map(({ to, label, icon }) => (
           <NavLink
             key={to} to={to}
             end={to === '/dashboard'}
             className={({ isActive }) =>
               `flex-1 flex flex-col items-center justify-center py-2 gap-0.5 text-[10px] font-medium transition-colors ${
-                isActive ? 'text-accent' : 'text-slate-400'
+                isActive
+                  ? inSection
+                    ? 'text-accent bg-accent/10 font-bold'
+                    : 'text-accent'
+                  : 'text-slate-400'
               }`
             }
           >
