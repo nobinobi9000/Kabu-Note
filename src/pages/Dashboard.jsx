@@ -6,11 +6,9 @@ import {
 import { useBroker } from '../context/BrokerContext'
 import { useDailyHistory } from '../hooks/useDailyHistory'
 import { useTransactions } from '../hooks/useTransactions'
-import { useAnnualSummary } from '../hooks/useAnnualSummary'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
-import { yen, pnlYen, pct, diff } from '../lib/format'
-import ScreenerWidget from '../components/ScreenerWidget'
+import { yen, pnlYen, pct } from '../lib/format'
 import SplitEventBanner from '../components/SplitEventBanner'
 
 const RANGES = [
@@ -52,7 +50,6 @@ export default function Dashboard() {
   const [excludeLongTerm, setExcludeLongTerm] = useState(false)
   const { data: history, loading: histLoading } = useDailyHistory(range)
   const { transactions }  = useTransactions()
-  const { summaries }     = useAnnualSummary()
   const [cashBalance, setCashBalance] = useState(0)
 
   // 現金残高を取得
@@ -92,10 +89,6 @@ export default function Dashboard() {
       return acc
     }, {})
 
-  // 年間サマリー
-  const currentYear = new Date().getFullYear()
-  const getSum = (year) => summaries.find(s => s.year === year) || { realized_pnl: 0, received_dividends: 0 }
-
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* 株式分割・併合の確認バナー */}
@@ -130,9 +123,6 @@ export default function Dashboard() {
           <KpiCard label="現金残高" value={yen(cashBalance)} />
         )}
       </div>
-
-      {/* スクリーナーウィジェット */}
-      <ScreenerWidget />
 
       {/* 資産推移グラフ */}
       <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
@@ -214,111 +204,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* 個別銘柄テーブル */}
-      <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-dark-border">
-          <p className="text-sm font-semibold">個別銘柄</p>
-          <p className="text-xs text-slate-400">{filtered.length} 件</p>
-        </div>
-        {filtered.length === 0 ? (
-          <p className="text-center py-10 text-slate-400 text-sm">銘柄が登録されていません</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm whitespace-nowrap">
-              <thead>
-                <tr className="text-xs text-slate-400 uppercase border-b border-slate-100 dark:border-dark-border">
-                  <th className="px-4 py-2 text-left">コード</th>
-                  <th className="px-4 py-2 text-left">会社名</th>
-                  <th className="px-4 py-2 text-left">業種</th>
-                  <th className="px-4 py-2 text-right">終値</th>
-                  <th className="px-4 py-2 text-right">前日差</th>
-                  <th className="px-4 py-2 text-right">保有株数</th>
-                  <th className="px-4 py-2 text-right">現在損益</th>
-                  <th className="px-4 py-2 text-right">配当額</th>
-                  <th className="px-4 py-2 text-right">配当月</th>
-                  <th className="px-4 py-2 text-left">証券会社</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(h => (
-                  <tr key={h.id} className="border-b border-slate-50 dark:border-dark-border last:border-0 hover:bg-slate-50 dark:hover:bg-dark-bg/50 transition-colors">
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-dark-border text-xs font-mono font-bold">{h.code}</span>
-                    </td>
-                    <td className="px-4 py-3 font-medium max-w-[160px] truncate">
-                      {h.stock?.name_ja || <span className="text-slate-400 text-xs">取得待ち</span>}
-                      {h.is_long_term && (
-                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-normal bg-slate-100 dark:bg-dark-border text-slate-400" title="保有目的">
-                          保有目的
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {h.stock?.sector
-                        ? <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-dark-border text-xs">{h.stock.sector}</span>
-                        : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-right">{h.stock?.price ? yen(h.stock.price) : '—'}</td>
-                    <td className="px-4 py-3 text-right">
-                      {h.stock?.price_change != null
-                        ? <span className={`text-xs ${Number(h.stock.price_change) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{diff(h.stock.price_change)}</span>
-                        : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-right">{Number(h.quantity).toLocaleString('ja-JP')} 株</td>
-                    <td className="px-4 py-3 text-right">
-                      {h.stock?.price
-                        ? <span className={`font-semibold ${h.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{pnlYen(h.pnl)}</span>
-                        : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-right">{h.stock?.dividend_rate ? `¥${h.stock.dividend_rate}` : '—'}</td>
-                    <td className="px-4 py-3 text-right text-slate-400 text-xs">{h.stock?.dividend_month || '—'}</td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">{h.broker || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* 年間損益サマリー */}
-      <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
-        <div className="mb-4">
-          <p className="text-sm font-semibold">年間損益サマリー</p>
-          <p className="text-xs text-slate-400 mt-0.5">全口座合計（証券会社フィルター対象外）</p>
-        </div>
-        <div className="grid grid-cols-2 gap-6">
-          {[currentYear, currentYear - 1].map(year => {
-            const s     = getSum(year)
-            const total = (s.realized_pnl || 0) + (s.received_dividends || 0)
-            return (
-              <div key={year}>
-                <p className="text-xs font-semibold text-slate-400 mb-2">{year}年</p>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">売却損益</span>
-                    <span className={`font-semibold ${(s.realized_pnl || 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                      {pnlYen(s.realized_pnl || 0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">受取配当（確定）</span>
-                    <span className="font-semibold text-emerald-500">
-                      +{yen(s.received_dividends || 0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t border-slate-100 dark:border-dark-border">
-                    <span className="font-semibold">合計</span>
-                    <span className={`font-bold ${total >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                      {pnlYen(total)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
     </div>
   )
 }

@@ -10,6 +10,7 @@ import Watchlist      from './pages/Watchlist'
 import Sector         from './pages/Sector'
 import Dividend       from './pages/Dividend'
 import Market         from './pages/Market'
+import MarketPickup   from './pages/MarketPickup'
 import Settings       from './pages/Settings'
 import Layout         from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -69,6 +70,13 @@ export default function App() {
           <ProtectedRoute>
             <BrokerProvider>
               <Layout><Market /></Layout>
+            </BrokerProvider>
+          </ProtectedRoute>
+        } />
+        <Route path="/pickup" element={
+          <ProtectedRoute>
+            <BrokerProvider>
+              <Layout><MarketPickup /></Layout>
             </BrokerProvider>
           </ProtectedRoute>
         } />

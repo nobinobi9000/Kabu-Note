@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useHoldings } from '../hooks/useHoldings'
+import { useAnnualSummary } from '../hooks/useAnnualSummary'
 import HoldingModal from '../components/HoldingModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SellModal from '../components/SellModal'
@@ -25,6 +26,9 @@ function DiffCell({ value }) {
 
 export default function Stocks() {
   const { holdings, loading, error, addHolding, updateHolding, deleteHolding, sellHolding, togglePurpose } = useHoldings()
+  const { summaries } = useAnnualSummary()
+  const currentYear = new Date().getFullYear()
+  const getSum = (year) => summaries.find(s => s.year === year) || { realized_pnl: 0, received_dividends: 0 }
 
   const [modal,   setModal]   = useState({ open: false, item: null })
   const [confirm, setConfirm] = useState({ open: false, id: null, name: '' })
@@ -215,6 +219,45 @@ export default function Stocks() {
           </table>
         </div>
       )}
+
+      {/* 年間損益サマリー（旧サマリー画面から移設） */}
+      <div className="mt-4 md:mt-6 bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl p-5">
+        <div className="mb-4">
+          <p className="text-sm font-semibold">年間損益サマリー</p>
+          <p className="text-xs text-slate-400 mt-0.5">全口座合計（証券会社フィルター対象外）</p>
+        </div>
+        <div className="grid grid-cols-2 gap-6">
+          {[currentYear, currentYear - 1].map(year => {
+            const s     = getSum(year)
+            const total = (s.realized_pnl || 0) + (s.received_dividends || 0)
+            return (
+              <div key={year}>
+                <p className="text-xs font-semibold text-slate-400 mb-2">{year}年</p>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">売却損益</span>
+                    <span className={`font-semibold ${(s.realized_pnl || 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {pnlYen(s.realized_pnl || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">受取配当（確定）</span>
+                    <span className="font-semibold text-emerald-500">
+                      +{yen(s.received_dividends || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-100 dark:border-dark-border">
+                    <span className="font-semibold">合計</span>
+                    <span className={`font-bold ${total >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {pnlYen(total)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
       {/* 追加・編集モーダル */}
       <HoldingModal
