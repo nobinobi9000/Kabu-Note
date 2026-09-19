@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { usePushNotifications } from '../hooks/usePushNotifications'
 import { supabase } from '../lib/supabase'
 
 function Section({ title, children }) {
@@ -187,6 +188,35 @@ function AppUpdateSection() {
   )
 }
 
+// ── Push通知（kabu-signalから移行、2026-09-19） ────────
+function NotificationSection() {
+  const { pushEnabled, checking, enablePush } = usePushNotifications()
+
+  return (
+    <Section title="通知">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">Push通知</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            危険アラート・売りシグナル・損益アラートを通知します
+          </p>
+        </div>
+        <button
+          onClick={enablePush}
+          disabled={checking}
+          className={
+            pushEnabled
+              ? 'px-4 py-2 border border-emerald-500 text-emerald-500 text-sm rounded-lg disabled:opacity-50 transition'
+              : `${BTN}`
+          }
+        >
+          {checking ? '確認中...' : pushEnabled ? '🔔 通知中' : '🔔 通知ON'}
+        </button>
+      </div>
+    </Section>
+  )
+}
+
 // ── アカウント削除 ────────────────────────────────
 function DangerSection() {
   const navigate                  = useNavigate()
@@ -277,6 +307,7 @@ export default function Settings() {
 
       <EmailSection currentEmail={user?.email ?? ''} />
       <PasswordSection />
+      <NotificationSection />
       <AppUpdateSection />
       <DangerSection />
     </div>
