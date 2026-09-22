@@ -1,6 +1,6 @@
 # Kabu Note — プロジェクト現状ドキュメント
 
-最終更新: 2026-09-22
+最終更新: 2026-09-23
 
 このファイルは別セッション・別AIが読んで「現時点のKabu Noteの全体像」を正確に再現するための引き継ぎ資料です。
 
@@ -45,7 +45,8 @@ Kabu-Note/
 │   │   ├── Market.jsx             # 市場マップ（スクリーナーのsector_heatmapを表示）
 │   │   └── Settings.jsx           # メール変更・パスワード変更・アプリ更新・アカウント削除
 │   ├── components/
-│   │   ├── Layout.jsx             # サイドナビ・ヘッダー・証券会社フィルター
+│   │   ├── Layout.jsx             # サイドナビ・ヘッダー
+│   │   ├── BrokerFilterSelect.jsx # 証券会社絞り込みセレクト（ホーム・保有銘柄ページがローカルに使用）
 │   │   ├── ProtectedRoute.jsx     # 未認証ならログインページへリダイレクト
 │   │   ├── HoldingModal.jsx       # 銘柄追加・編集モーダル
 │   │   ├── SellModal.jsx          # 売却モーダル（数量・単価・日付・現金追加）
@@ -68,8 +69,6 @@ Kabu-Note/
 │   │   ├── useScreenerData.js     # スクリーナーlatesst.jsonをfetch（localStorageキャッシュ）
 │   │   ├── useSplitEvents.js      # 株式分割・併合イベント取得
 │   │   └── useScreenerData.js     # スクリーナーデータ取得
-│   ├── context/
-│   │   └── BrokerContext.jsx      # 証券会社フィルター状態をコンテキストで共有
 │   └── lib/
 │       ├── supabase.js            # Supabaseクライアント初期化
 │       ├── annualSummary.js       # annual_summaryへの加算UPSERT（addToAnnualSummary関数）
@@ -145,9 +144,20 @@ Kabu-Note/
 |--------|-----|------|
 | id | uuid PK | |
 | name | text unique | 証券会社名 |
+| category | text | 大手／準大手／ネット証券／独立系／その他（`<optgroup>`表示用） |
 | sort_order | int | 表示順 |
 
 RLS: `authenticated`ロールに対しSELECTのみ全許可（`brokers_read_all`）。書き込みは想定していない（増減時は手動でINSERT）。
+
+**初期データ（2026-09-22投入、国内主要20社＋その他）:** 大手5社（野村・大和・SMBC日興・みずほ・三菱UFJモルガン・スタンレー）、
+準大手5社（岡三・東海東京・岩井コスモ・いちよし・丸三）、ネット証券7社（SBI・楽天・マネックス・auカブコム・松井・GMOクリック・DMM.com）、
+独立系3社（PayPay・岡三オンライン・SBIネオトレード）、その他1。ユーザーは`brokers`マスタからの選択式のみで、自由入力は廃止
+（[HoldingModal.jsx](../src/components/HoldingModal.jsx)・[BrokerFilterSelect.jsx](../src/components/BrokerFilterSelect.jsx)）。
+
+**証券会社フィルタの設計（2026-09-23改訂）:** 以前は`BrokerContext`（全ページ共通、`Layout.jsx`のボタン式ヘッダー）で
+一元管理していたが、セクター・配当ページでは機能しておらず（各ページが独自に`useHoldings()`していてフィルタ結果を
+反映していなかった）、かつUI的にも不要だったため撤去。ホーム・保有銘柄ページのみ、それぞれ独立したローカルstateで
+`BrokerFilterSelect`（選択式、デフォルト「全て」）による絞り込みを持つ。ページ間でフィルタ選択は共有しない。
 
 #### `stocks` — 銘柄マスタ（バッチが更新）
 | カラム | 型 | 備考 |
