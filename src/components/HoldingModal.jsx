@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useBrokers, groupBrokersByCategory } from '../hooks/useBrokers'
+import { useBrokers } from '../hooks/useBrokers'
 
 const FIELD = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-bg text-sm focus:outline-none focus:ring-2 focus:ring-accent'
 
 export default function HoldingModal({ open, onClose, onSubmit, initial }) {
   const isEdit = Boolean(initial)
   const { brokers } = useBrokers()
-  const brokerGroups = groupBrokersByCategory(brokers)
   const [code,         setCode]         = useState('')
   const [quantity,     setQuantity]     = useState('')
   const [costPrice,    setCostPrice]    = useState('')
@@ -122,12 +121,8 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
               className={FIELD}
             >
               <option value="">未選択</option>
-              {brokerGroups.map(g => (
-                <optgroup key={g.category} label={g.category}>
-                  {g.items.map(b => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </optgroup>
+              {brokers.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
           </div>

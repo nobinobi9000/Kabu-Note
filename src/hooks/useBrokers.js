@@ -14,7 +14,7 @@ export function useBrokers() {
     async function load() {
       const { data } = await supabase
         .from('brokers')
-        .select('id, name, category')
+        .select('id, name')
         .order('sort_order', { ascending: true })
       if (!cancelled) {
         setBrokers(data || [])
@@ -26,19 +26,4 @@ export function useBrokers() {
   }, [])
 
   return { brokers, loading }
-}
-
-/** brokersをcategory順にグルーピングする（<optgroup>表示用） */
-export function groupBrokersByCategory(brokers) {
-  const groups = []
-  const indexByCategory = {}
-  for (const b of brokers) {
-    const cat = b.category || 'その他'
-    if (!(cat in indexByCategory)) {
-      indexByCategory[cat] = groups.length
-      groups.push({ category: cat, items: [] })
-    }
-    groups[indexByCategory[cat]].items.push(b)
-  }
-  return groups
 }

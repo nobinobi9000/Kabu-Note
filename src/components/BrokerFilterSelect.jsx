@@ -1,4 +1,4 @@
-import { useBrokers, groupBrokersByCategory } from '../hooks/useBrokers'
+import { useBrokers } from '../hooks/useBrokers'
 
 /**
  * 証券会社での絞り込み用セレクト。デフォルトは「全て」(value='')。
@@ -6,7 +6,6 @@ import { useBrokers, groupBrokersByCategory } from '../hooks/useBrokers'
  */
 export default function BrokerFilterSelect({ value, onChange, className = '' }) {
   const { brokers } = useBrokers()
-  const brokerGroups = groupBrokersByCategory(brokers)
 
   if (brokers.length === 0) return null
 
@@ -17,12 +16,8 @@ export default function BrokerFilterSelect({ value, onChange, className = '' }) 
       className={`px-3 py-1.5 rounded-lg border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-bg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-accent ${className}`}
     >
       <option value="">全て</option>
-      {brokerGroups.map(g => (
-        <optgroup key={g.category} label={g.category}>
-          {g.items.map(b => (
-            <option key={b.id} value={b.id}>{b.name}</option>
-          ))}
-        </optgroup>
+      {brokers.map(b => (
+        <option key={b.id} value={b.id}>{b.name}</option>
       ))}
     </select>
   )
