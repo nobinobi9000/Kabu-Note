@@ -364,6 +364,30 @@ kabu-signal 側は読み取り実装済みのため、UI を追加すれば損�
 - `name_ja` 翻訳のより安定した実装（Google翻訳以外の手段、または手動マスタ管理）
 - sector と同様に `name_ja` もマスタテーブル管理への移行検討
 
+### kabu-signal → Kabu-Note 通知ロジック移行計画（2026-09-19開始、進行中）
+
+kabu-signalはPush通知(PWA)のためだけに存在させる価値が薄いと判断し、通知ロジック
+自体をKabu-Noteに移行し、将来的にkabu-signalを廃止する方針で作業中。段階的に実施し、
+既存のkabu-signal通知は各フェーズが本番で安定するまで止めない。
+
+| フェーズ | 内容 | 状況 |
+|---|---|---|
+| 1 | Kabu-NoteにPWA基盤を追加（manifest・Service Worker・VAPID鍵はkabu-signalと同じものを流用） | 完了(2026-09-19) |
+| 2 | `/api/push/subscribe`・`/api/push/send` をVercel serverless functionとして新設 | 完了(2026-09-19、送信APIは疎通確認済み。実機での購読・受信確認は未) |
+| 3 | 実機でKabu-Noteから通知が届くことを検証 | 未着手 |
+| 4 | Python通知ロジック（jvqm_screener.py等）とGitHub ActionsワークフローをKabu-Note側に移植 | 未着手 |
+| 5 | 本番でKabu-Note経由の通知が数日安定稼働するのを確認 | 未着手 |
+| 6 | kabu-signalのワークフローを停止し、kabu-signal自体をアーカイブ | 未着手 |
+
+**フェーズ4の必須要件（2026-09-22追記）:** kabu-signalの`morning-scan.yml`は
+GitHub純正の`schedule`トリガーのみに依存しており、2026-09-21に設定
+（月〜金12:00 UTC）と全く一致しない曜日・時刻（日曜18:00 UTC）で誤発火する
+現象を確認した（原因未特定、GitHub Actions側の既知の信頼性問題の一種と推測）。
+japan-stock-screenerは同種の問題を`cloudflare-watchdog/`という外部cron監視で
+解決済み。**移行先のワークフロー（Kabu-Note側）を新設する際は、最初から
+同様の外部watchdogによる起動保証を組み込むこと。** kabu-signal自体は廃止予定
+のため、kabu-signal側にwatchdogを新設する対応はしない。
+
 ---
 
 ## 7. 使用技術・主要ライブラリとバージョン
@@ -452,3 +476,27 @@ account_entitlements.plan
 マイグレーション `fix_rls_performance_and_indexes` で以下を適用済み：
 - holdings, transactions, dividend_records, yutai_records, watchlist, daily_history, annual_summary の7テーブル
 - holdings.user_id, transactions.user_id にインデックス追加
+
+---
+
+## INTEGRATION_MAP.mdへの反映待ち
+
+- **kabu-signal → Kabu-Note 通知ロジック移行計画の開始（2026-09-19〜、進行中）**
+
+  kabu-signalはPush通知(PWA)専用アプリとして存在価値が薄くなったため、通知
+  ロジック自体をKabu-Noteに移行し、将来的にkabu-signalを廃止する方針が
+  決まった。詳細な6段階の計画は本ファイル6節「kabu-signal → Kabu-Note
+  通知ロジック移行計画」を参照。現時点でフェーズ1・2（PWA基盤・Push API）を
+  Kabu-Note側に実装済み。
+
+  **INTEGRATION_MAP.mdへの反映内容**:
+  1. 3アプリの役割分担の記述に、「kabu-signalは段階的に廃止予定、通知
+     ロジックはKabu-Noteに統合中」という現状を追記してほしい
+  2. §3に新規ルールとして「kabu-signalの通知系ファイル(push_sender.py等)を
+     変更する場合、同じ変更をKabu-Note側の移植済みコードにも適用が必要か
+     確認すること」を追加してほしい（移行完了までの間、二重管理になる期間が
+     あるため）
+  3. 今回発見した「GitHub純正scheduleトリガーが設定と異なる曜日・時刻で
+     誤発火することがある(2026-09-21に実例確認)」という既知の問題を、
+     3アプリ共通の注意事項として記録してほしい。移行先ワークフロー新設時は
+     cloudflare-watchdog相当の外部監視を最初から組み込むこと
