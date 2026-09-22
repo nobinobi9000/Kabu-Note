@@ -218,51 +218,67 @@ function NotificationSection() {
   )
 }
 
-// ── 証券会社の並び順（自分のアカウントのみに反映、2026-09-23） ──
+// ── 証券会社の並び順・非表示（自分のアカウントのみに反映、2026-09-23） ──
 function BrokerOrderSection() {
-  const { brokers, loading, saveOrder } = useBrokers()
+  const { allBrokers, hiddenIds, loading, saveOrder, toggleHidden } = useBrokers()
 
   function move(index, dir) {
     const target = index + dir
-    if (target < 0 || target >= brokers.length) return
-    const next = [...brokers]
+    if (target < 0 || target >= allBrokers.length) return
+    const next = [...allBrokers]
     ;[next[index], next[target]] = [next[target], next[index]]
     saveOrder(next.map(b => b.id))
   }
 
   return (
-    <Section title="証券会社の並び順">
+    <Section title="証券会社の表示設定">
       <p className="text-xs text-slate-400 mb-3">
-        銘柄追加・証券会社での絞り込みに出てくる一覧の順番です（自分のアカウントのみに反映されます）
+        銘柄追加・証券会社での絞り込みに出てくる一覧の順番と、口座を持っていない証券会社の非表示を設定できます（自分のアカウントのみに反映されます）
       </p>
       {loading ? (
         <p className="text-xs text-slate-400">読み込み中...</p>
       ) : (
         <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
-          {brokers.map((b, i) => (
-            <div
-              key={b.id}
-              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-dark-bg text-sm"
-            >
-              <span>{b.name}</span>
-              <div className="flex gap-1 flex-shrink-0">
-                <button
-                  onClick={() => move(i, -1)}
-                  disabled={i === 0}
-                  className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 dark:border-dark-border text-slate-500 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-dark-border transition"
-                >
-                  ↑
-                </button>
-                <button
-                  onClick={() => move(i, 1)}
-                  disabled={i === brokers.length - 1}
-                  className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 dark:border-dark-border text-slate-500 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-dark-border transition"
-                >
-                  ↓
-                </button>
+          {allBrokers.map((b, i) => {
+            const isHidden = hiddenIds.has(b.id)
+            return (
+              <div
+                key={b.id}
+                className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm ${
+                  isHidden ? 'bg-slate-50/50 dark:bg-dark-bg/50 text-slate-400' : 'bg-slate-50 dark:bg-dark-bg'
+                }`}
+              >
+                <span className={isHidden ? 'line-through' : ''}>{b.name}</span>
+                <div className="flex gap-1 flex-shrink-0">
+                  <button
+                    onClick={() => toggleHidden(b.id)}
+                    title={isHidden ? '表示する' : '非表示にする（口座を持っていない証券会社など）'}
+                    className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition ${
+                      isHidden
+                        ? 'border-slate-200 dark:border-dark-border text-slate-400 hover:bg-slate-100 dark:hover:bg-dark-border'
+                        : 'border-slate-200 dark:border-dark-border text-slate-500 hover:bg-slate-100 dark:hover:bg-dark-border'
+                    }`}
+                  >
+                    {isHidden ? '🙈' : '👁️'}
+                  </button>
+                  <button
+                    onClick={() => move(i, -1)}
+                    disabled={i === 0}
+                    className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 dark:border-dark-border text-slate-500 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-dark-border transition"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    onClick={() => move(i, 1)}
+                    disabled={i === allBrokers.length - 1}
+                    className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 dark:border-dark-border text-slate-500 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-dark-border transition"
+                  >
+                    ↓
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </Section>
