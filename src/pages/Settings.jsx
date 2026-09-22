@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { usePushNotifications } from '../hooks/usePushNotifications'
+import { useBrokers } from '../hooks/useBrokers'
 import { supabase } from '../lib/supabase'
 
 function Section({ title, children }) {
@@ -217,6 +218,57 @@ function NotificationSection() {
   )
 }
 
+// ── 証券会社の並び順（自分のアカウントのみに反映、2026-09-23） ──
+function BrokerOrderSection() {
+  const { brokers, loading, saveOrder } = useBrokers()
+
+  function move(index, dir) {
+    const target = index + dir
+    if (target < 0 || target >= brokers.length) return
+    const next = [...brokers]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    saveOrder(next.map(b => b.id))
+  }
+
+  return (
+    <Section title="証券会社の並び順">
+      <p className="text-xs text-slate-400 mb-3">
+        銘柄追加・証券会社での絞り込みに出てくる一覧の順番です（自分のアカウントのみに反映されます）
+      </p>
+      {loading ? (
+        <p className="text-xs text-slate-400">読み込み中...</p>
+      ) : (
+        <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
+          {brokers.map((b, i) => (
+            <div
+              key={b.id}
+              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-dark-bg text-sm"
+            >
+              <span>{b.name}</span>
+              <div className="flex gap-1 flex-shrink-0">
+                <button
+                  onClick={() => move(i, -1)}
+                  disabled={i === 0}
+                  className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 dark:border-dark-border text-slate-500 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-dark-border transition"
+                >
+                  ↑
+                </button>
+                <button
+                  onClick={() => move(i, 1)}
+                  disabled={i === brokers.length - 1}
+                  className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 dark:border-dark-border text-slate-500 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-dark-border transition"
+                >
+                  ↓
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  )
+}
+
 // ── アカウント削除 ────────────────────────────────
 function DangerSection() {
   const navigate                  = useNavigate()
@@ -308,6 +360,7 @@ export default function Settings() {
       <EmailSection currentEmail={user?.email ?? ''} />
       <PasswordSection />
       <NotificationSection />
+      <BrokerOrderSection />
       <AppUpdateSection />
       <DangerSection />
     </div>
