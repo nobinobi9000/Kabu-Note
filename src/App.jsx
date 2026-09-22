@@ -14,7 +14,6 @@ import MarketPickup   from './pages/MarketPickup'
 import Settings       from './pages/Settings'
 import Layout         from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
-import { BrokerProvider } from './context/BrokerContext'
 
 // ダークモード初期設定（フラッシュ防止）
 const saved = localStorage.getItem('theme')
@@ -33,58 +32,42 @@ export default function App() {
         <Route path="/update-password" element={<UpdatePassword />} />
         <Route path="/dashboard" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Dashboard /></Layout>
-            </BrokerProvider>
+            <Layout><Dashboard /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/stocks" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Stocks /></Layout>
-            </BrokerProvider>
+            <Layout><Stocks /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/watchlist" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Watchlist /></Layout>
-            </BrokerProvider>
+            <Layout><Watchlist /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/sector" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Sector /></Layout>
-            </BrokerProvider>
+            <Layout><Sector /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/dividend" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Dividend /></Layout>
-            </BrokerProvider>
+            <Layout><Dividend /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/market" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Market /></Layout>
-            </BrokerProvider>
+            <Layout><Market /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/pickup" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><MarketPickup /></Layout>
-            </BrokerProvider>
+            <Layout><MarketPickup /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/settings" element={
           <ProtectedRoute>
-            <BrokerProvider>
-              <Layout><Settings /></Layout>
-            </BrokerProvider>
+            <Layout><Settings /></Layout>
           </ProtectedRoute>
         } />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useHoldings } from '../hooks/useHoldings'
 import { useAnnualSummary } from '../hooks/useAnnualSummary'
 import HoldingModal from '../components/HoldingModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SellModal from '../components/SellModal'
+import BrokerFilterSelect from '../components/BrokerFilterSelect'
 import { yen, pnlYen, diff } from '../lib/format'
 
 function PnlCell({ value }) {
@@ -33,6 +34,12 @@ export default function Stocks() {
   const [modal,   setModal]   = useState({ open: false, item: null })
   const [confirm, setConfirm] = useState({ open: false, id: null, name: '' })
   const [sellModal, setSellModal] = useState({ open: false, holding: null })
+  const [brokerFilter, setBrokerFilter] = useState('')
+
+  const filteredHoldings = useMemo(
+    () => brokerFilter ? holdings.filter(h => h.broker_id === brokerFilter) : holdings,
+    [holdings, brokerFilter]
+  )
 
   function openAdd()          { setModal({ open: true,  item: null }) }
   function openEdit(item)     { setModal({ open: true,  item }) }
@@ -69,14 +76,17 @@ export default function Stocks() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-bold">個別銘柄</h2>
-          <p className="text-xs text-slate-400 mt-0.5">{holdings.length} 件</p>
+          <p className="text-xs text-slate-400 mt-0.5">{filteredHoldings.length} 件</p>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-1.5 px-4 py-2 bg-accent text-dark-bg text-sm font-semibold rounded-lg hover:opacity-90 transition"
-        >
-          <span className="text-lg leading-none">+</span> 銘柄を追加
-        </button>
+        <div className="flex items-center gap-2">
+          <BrokerFilterSelect value={brokerFilter} onChange={setBrokerFilter} />
+          <button
+            onClick={openAdd}
+            className="flex items-center gap-1.5 px-4 py-2 bg-accent text-dark-bg text-sm font-semibold rounded-lg hover:opacity-90 transition"
+          >
+            <span className="text-lg leading-none">+</span> 銘柄を追加
+          </button>
+        </div>
       </div>
 
       {/* エラー */}
@@ -94,6 +104,10 @@ export default function Stocks() {
           <p className="text-4xl mb-3">📒</p>
           <p className="font-medium">保有銘柄がまだありません</p>
           <p className="text-sm mt-1">「銘柄を追加」から登録してください</p>
+        </div>
+      ) : filteredHoldings.length === 0 ? (
+        <div className="text-center py-20 text-slate-400">
+          <p className="font-medium">該当する銘柄がありません</p>
         </div>
       ) : (
         /* テーブル */
@@ -115,7 +129,7 @@ export default function Stocks() {
               </tr>
             </thead>
             <tbody>
-              {holdings.map(h => (
+              {filteredHoldings.map(h => (
                 <tr
                   key={h.id}
                   className="border-b border-slate-100 dark:border-dark-border last:border-0 hover:bg-slate-50 dark:hover:bg-dark-card/50 transition-colors"

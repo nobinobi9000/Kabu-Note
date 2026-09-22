@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { useBroker } from '../context/BrokerContext'
-import { yen, pnlYen } from '../lib/format'
+import { useHoldings } from '../hooks/useHoldings'
+import { yen } from '../lib/format'
 
 const COLORS = [
   '#00ff88','#f59e0b','#3b82f6','#ec4899','#8b5cf6',
@@ -21,12 +21,12 @@ function CustomTooltip({ active, payload }) {
 }
 
 export default function Sector() {
-  const { filtered } = useBroker()
+  const { holdings } = useHoldings()
 
   const { sectorData, totalMarket } = useMemo(() => {
     const map = {}
     let total = 0
-    filtered.forEach(h => {
+    holdings.forEach(h => {
       const s = h.stock?.sector || '未分類'
       map[s] = (map[s] || 0) + (h.mktVal || 0)
       total += (h.mktVal || 0)
@@ -35,7 +35,7 @@ export default function Sector() {
       .map(([name, value]) => ({ name, value, pct: total > 0 ? (value / total) * 100 : 0 }))
       .sort((a, b) => b.value - a.value)
     return { sectorData: arr, totalMarket: total }
-  }, [filtered])
+  }, [holdings])
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">

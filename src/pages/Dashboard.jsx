@@ -3,13 +3,14 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, ReferenceLine
 } from 'recharts'
-import { useBroker } from '../context/BrokerContext'
+import { useHoldings } from '../hooks/useHoldings'
 import { useDailyHistory } from '../hooks/useDailyHistory'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import { yen, pnlYen, pct } from '../lib/format'
 import SplitEventBanner from '../components/SplitEventBanner'
+import BrokerFilterSelect from '../components/BrokerFilterSelect'
 
 const RANGES = [
   { label: '30日', days: 30 },
@@ -45,12 +46,15 @@ function CustomTooltip({ active, payload, label }) {
 
 export default function Dashboard() {
   const { user }    = useAuth()
-  const { filtered } = useBroker()
+  const { holdings } = useHoldings()
   const [range, setRange]   = useState(30)
   const [excludeLongTerm, setExcludeLongTerm] = useState(false)
+  const [brokerFilter, setBrokerFilter] = useState('')
   const { data: history, loading: histLoading } = useDailyHistory(range)
   const { transactions }  = useTransactions()
   const [cashBalance, setCashBalance] = useState(0)
+
+  const filtered = brokerFilter ? holdings.filter(h => h.broker_id === brokerFilter) : holdings
 
   // 現金残高を取得
   useEffect(() => {
@@ -94,16 +98,19 @@ export default function Dashboard() {
       {/* 株式分割・併合の確認バナー */}
       <SplitEventBanner />
 
-      {/* 保有目的を除くトグル */}
-      <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer w-fit">
-        <input
-          type="checkbox"
-          checked={excludeLongTerm}
-          onChange={e => setExcludeLongTerm(e.target.checked)}
-          className="w-3.5 h-3.5 rounded border-slate-300 dark:border-dark-border text-accent focus:ring-accent"
-        />
-        保有目的の銘柄を除く（売買目的だけの損益を見る）
-      </label>
+      {/* 保有目的を除くトグル・証券会社フィルタ */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer w-fit">
+          <input
+            type="checkbox"
+            checked={excludeLongTerm}
+            onChange={e => setExcludeLongTerm(e.target.checked)}
+            className="w-3.5 h-3.5 rounded border-slate-300 dark:border-dark-border text-accent focus:ring-accent"
+          />
+          保有目的の銘柄を除く（売買目的だけの損益を見る）
+        </label>
+        <BrokerFilterSelect value={brokerFilter} onChange={setBrokerFilter} />
+      </div>
 
       {/* KPIカード */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">

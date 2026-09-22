@@ -1,7 +1,6 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { useBroker } from '../context/BrokerContext'
 
 // デスクトップ用サイドバー: 全項目をフラットに表示（画面幅に余裕があるため簡素化は不要）
 const NAV = [
@@ -58,11 +57,6 @@ const SECTIONS = {
   },
 }
 
-// ブローカーフィルターは資産額に関わる画面（ホーム・保有銘柄セクション）にのみ表示する。
-// 市場セクション（銘柄横断データ）・個人設定には表示しない
-// (2026-09-18、個人設定に誤って表示されていた不具合の修正)。
-const BROKER_FILTER_PATHS = new Set(['/dashboard', '/stocks', '/sector', '/dividend'])
-
 function findSection(pathname) {
   for (const [key, section] of Object.entries(SECTIONS)) {
     if (section.paths.includes(pathname)) return key
@@ -78,7 +72,6 @@ function currentMobileTabs(pathname) {
 export default function Layout({ children }) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { brokers, selected, setSelected } = useBroker()
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     if (saved) return saved === 'dark'
@@ -97,7 +90,6 @@ export default function Layout({ children }) {
 
   const inSection = Boolean(findSection(location.pathname))
   const mobileTabs = currentMobileTabs(location.pathname)
-  const showBrokerFilter = brokers.length > 0 && BROKER_FILTER_PATHS.has(location.pathname)
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -171,25 +163,6 @@ export default function Layout({ children }) {
             {dark ? '☀️' : '🌙'}
           </button>
         </header>
-
-        {/* ブローカーフィルター（ホーム・保有銘柄セクションのみ） */}
-        {showBrokerFilter && (
-          <header className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-dark-card border-b border-slate-200 dark:border-dark-border overflow-x-auto flex-shrink-0 scrollbar-none">
-            {['全て', ...brokers].map(b => (
-              <button
-                key={b}
-                onClick={() => setSelected(b)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition whitespace-nowrap flex-shrink-0 ${
-                  selected === b
-                    ? 'bg-accent text-dark-bg'
-                    : 'bg-slate-100 dark:bg-dark-border text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
-              >
-                {b}
-              </button>
-            ))}
-          </header>
-        )}
 
         {/* ページコンテンツ（モバイルはボトムナビ分 pb-16 を確保） */}
         <main className="flex-1 overflow-y-auto bg-slate-50 dark:bg-dark-bg pb-16 md:pb-0">
