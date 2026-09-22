@@ -107,50 +107,6 @@ export default function Sector() {
           </table>
         </div>
       )}
-
-      {/* 銘柄一覧（セクター順） */}
-      <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-dark-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-dark-border">
-          <p className="text-sm font-semibold">個別銘柄</p>
-          <p className="text-xs text-slate-400">{filtered.length} 件</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm whitespace-nowrap">
-            <thead>
-              <tr className="text-xs text-slate-400 uppercase border-b border-slate-100 dark:border-dark-border">
-                <th className="px-4 py-2 text-left">コード</th>
-                <th className="px-4 py-2 text-left">会社名</th>
-                <th className="px-4 py-2 text-left">業種</th>
-                <th className="px-4 py-2 text-right">評価額</th>
-                <th className="px-4 py-2 text-right">現在損益</th>
-                <th className="px-4 py-2 text-left">証券会社</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...filtered].sort((a, b) => (a.stock?.sector || '').localeCompare(b.stock?.sector || '')).map(h => (
-                <tr key={h.id} className="border-b border-slate-50 dark:border-dark-border last:border-0 hover:bg-slate-50 dark:hover:bg-dark-bg/50">
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-dark-border text-xs font-mono font-bold">{h.code}</span>
-                  </td>
-                  <td className="px-4 py-3 font-medium max-w-[160px] truncate">
-                    {h.stock?.name_ja || <span className="text-slate-400 text-xs">取得待ち</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {h.stock?.sector
-                      ? <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-dark-border text-xs">{h.stock.sector}</span>
-                      : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-right">{yen(h.mktVal)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <span className={`font-semibold ${h.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{pnlYen(h.pnl)}</span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">{h.broker || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   )
 }
