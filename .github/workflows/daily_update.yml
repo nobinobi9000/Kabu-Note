@@ -2,8 +2,10 @@ name: Kabu Note - Daily Stock Update
 
 on:
   schedule:
-    # 平日16時（JST = UTC 07:00）に実行
-    - cron: '0 7 * * 1-5'
+    # 平日17時（JST = UTC 08:00）に実行
+    # japan-stock-screenerの完了(〜16:30 JST)を待ってから動く必要があるため
+    # 16:00→17:00に変更(2026-09-22。銘柄マスタをscreener側から取得する方式に変えたため)
+    - cron: '0 8 * * 1-5'
   workflow_dispatch:
     inputs:
       force_run:

@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
+import { useBrokers } from '../hooks/useBrokers'
 
 const FIELD = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-bg text-sm focus:outline-none focus:ring-2 focus:ring-accent'
 
 export default function HoldingModal({ open, onClose, onSubmit, initial }) {
   const isEdit = Boolean(initial)
+  const { brokers } = useBrokers()
   const [code,         setCode]         = useState('')
   const [quantity,     setQuantity]     = useState('')
   const [costPrice,    setCostPrice]    = useState('')
-  const [broker,       setBroker]       = useState('')
+  const [brokerId,     setBrokerId]     = useState('')
   const [isLongTerm,   setIsLongTerm]   = useState(false)
   const [takeProfitPct, setTakeProfitPct] = useState('')
   const [stopLossPct,   setStopLossPct]   = useState('')
@@ -19,7 +21,7 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
       setCode(initial?.code ?? '')
       setQuantity(initial?.quantity ?? '')
       setCostPrice(initial?.cost_price ?? '')
-      setBroker(initial?.broker ?? '')
+      setBrokerId(initial?.broker_id ?? '')
       setIsLongTerm(initial?.is_long_term ?? false)
       setTakeProfitPct(initial?.take_profit_pct ?? '')
       setStopLossPct(initial?.stop_loss_pct ?? '')
@@ -37,7 +39,7 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
     setLoading(true)
     try {
       await onSubmit({
-        code, quantity, cost_price: costPrice, broker,
+        code, quantity, cost_price: costPrice, broker_id: brokerId || null,
         is_long_term: isLongTerm,
         take_profit_pct: takeProfitPct === '' ? null : takeProfitPct,
         stop_loss_pct: stopLossPct === '' ? null : stopLossPct,
@@ -114,11 +116,15 @@ export default function HoldingModal({ open, onClose, onSubmit, initial }) {
             <label className="block text-sm font-medium mb-1">
               証券会社 <span className="text-xs text-slate-400">（任意）</span>
             </label>
-            <input
-              type="text" placeholder="例: SBI証券"
-              value={broker} onChange={e => setBroker(e.target.value)}
+            <select
+              value={brokerId} onChange={e => setBrokerId(e.target.value)}
               className={FIELD}
-            />
+            >
+              <option value="">未選択</option>
+              {brokers.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* 保有目的 */}

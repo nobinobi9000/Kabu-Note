@@ -1,6 +1,6 @@
 # Kabu Note — プロジェクト現状ドキュメント
 
-最終更新: 2026-09-02
+最終更新: 2026-09-22
 
 このファイルは別セッション・別AIが読んで「現時点のKabu Noteの全体像」を正確に再現するための引き継ぎ資料です。
 
@@ -75,7 +75,7 @@ Kabu-Note/
 │       ├── annualSummary.js       # annual_summaryへの加算UPSERT（addToAnnualSummary関数）
 │       └── format.js              # 表示フォーマット関数（yen/pnlYen/pct/diff）
 ├── scripts/
-│   └── update_stocks.py           # 日次バッチ（GitHub Actions）。yfinanceで株価取得→stocks/daily_history/dividend_recordsを更新
+│   └── update_stocks.py           # 日次バッチ（GitHub Actions）。社名/業種/株価はstock_master_latestビュー、配当/分割のみyfinance→stocks/daily_history/dividend_recordsを更新
 ├── public/
 │   ├── manifest.json              # PWAマニフェスト（start_url: "/dashboard"）
 │   ├── favicon.svg
@@ -100,7 +100,7 @@ Kabu-Note/
 | パスワードリセット | ✅ 完了 | ResetPassword → メール → UpdatePassword |
 | 保有銘柄管理（CRUD） | ✅ 完了 | 無料プランは3件まで（FREE_HOLDINGS_LIMIT = 3） |
 | 売却記録・損益計算 | ✅ 完了 | transactions + annual_summary に記録。現金残高追加オプションあり |
-| 株価自動更新（日次バッチ） | ✅ 完了 | GitHub Actions 平日16時JST。update_stocks.py |
+| 株価自動更新（日次バッチ） | ✅ 完了 | GitHub Actions 平日17時JST。update_stocks.py |
 | 資産推移グラフ | ✅ 完了 | daily_history テーブル。30日/90日/1年 切替 |
 | ウォッチリスト | ✅ 完了 | 無料プランは5件まで（FREE_WATCHLIST_LIMIT = 5） |
 | 業種別集計（Sector） | ✅ 完了 | holdings × sector でグループ化 |
@@ -133,23 +133,40 @@ Kabu-Note/
 | code | text | 証券コード（4桁） |
 | quantity | numeric | 保有株数 |
 | cost_price | numeric | 取得単価（1株あたり） |
-| broker | text | 証券会社名（任意） |
+| broker | text | 【非推奨・2026-09-22】旧・証券会社名（自由入力）。新規書き込みは行わない。移行期間中のみ残置 |
+| broker_id | uuid | `brokers`テーブルへのFK（証券会社。2026-09-22追加） |
+| is_long_term | bool | 保有目的（長期保有）フラグ |
+| take_profit_pct / stop_loss_pct | numeric | kabu-signal個別売買設定（空欄なら一括設定を使用） |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
+
+#### `brokers` — 証券会社マスタ（2026-09-22新設）
+| カラム | 型 | 備考 |
+|--------|-----|------|
+| id | uuid PK | |
+| name | text unique | 証券会社名 |
+| sort_order | int | 表示順 |
+
+RLS: `authenticated`ロールに対しSELECTのみ全許可（`brokers_read_all`）。書き込みは想定していない（増減時は手動でINSERT）。
 
 #### `stocks` — 銘柄マスタ（バッチが更新）
 | カラム | 型 | 備考 |
 |--------|-----|------|
 | code | text PK | 証券コード |
-| name_ja | text | 日本語社名（deep-translatorで翻訳、失敗時は英語名） |
-| name_en | text | 英語社名（yfinanceのlongName） |
-| sector | text | 業種（SECTOR_MAPで英語→日本語変換。翻訳API不使用） |
-| price | numeric | 終値 |
-| price_change | numeric | 前日差 |
+| name_ja | text | 日本語社名。**2026-09-22〜:** `stock_master_latest`ビュー（japan-stock-screener由来）から取得。翻訳は行わない |
+| name_en | text | 英語社名（yfinanceのlongName、参考情報のみ） |
+| sector | text | 業種。**2026-09-22〜:** `stock_master_latest`ビュー由来（TSE33業種分類。旧GICS系分類から変更） |
+| price | numeric | 終値。**2026-09-22〜:** `stock_master_latest`ビュー（screenerのclose_price）由来 |
+| price_change | numeric | 前日差（yfinance fast_infoのprevious_closeとマスタのpriceの差分。ここのみyfinance依存） |
 | dividend_rate | numeric | 1株配当額（yfinance dividendRate） |
 | dividend_month | text | 直近権利確定年月 "YYYY/MM"（yfinanceのlast ex-dividend date） |
 | currency | text | 通貨（通常JPY） |
 | updated_at | timestamptz | バッチ実行時に更新 |
+
+> **⚠️ 2026-09-22 重大不具合修正:** それ以前は`name_ja`をGoogle翻訳(`deep-translator`)で生成していたが、
+> GitHub ActionsのCI環境からのアクセスが頻繁にブロックされ、直近の実行では保有銘柄48件中45件(94%)が
+> 「英語社名＋株式会社」のまま保存されていた。翻訳を廃止し、japan-stock-screenerが日次生成する
+> 正確な日本語名（`stock_master_latest`ビュー経由）を参照する方式に変更。詳細は6節参照。
 
 **⚠️ 注意:** `dividend_rate` と `dividend_month` はyfinanceが返す最新値（次年度予想に切り替わることがある）。確定後の金額は `dividend_records` にスナップショットされる。
 
@@ -294,20 +311,34 @@ japan-stock-screener バッチ
 }
 ```
 
-**⚠️ 絶対原則:** Kabu Note 側で独自に yfinance を呼ぶコードは書かない（`update_stocks.py` のみ例外）。
+**⚠️ 絶対原則（2026-09-22改訂）:** Kabu Note側で銘柄の社名・業種・株価を独自生成しない。
+`stock_master_latest`ビュー（japan-stock-screenerの`screener_stock_snapshots`が唯一の情報源）を参照する。
+`update_stocks.py`は配当・株式分割・前日差の取得のみ、例外的にyfinanceを直接呼ぶ。
+
+### 5-1b. 共有銘柄マスタ `stock_master_latest`（全アプリ共通、2026-09-22新設）
+
+Supabaseのビュー。`screener_stock_snapshots`から銘柄コードごとの最新行（`code, name, sector, close_price`）を返す。
+japan-stock-screenerが毎日書き込む正確な日本語社名（JPX公式リスト由来）・TSE33業種分類・終値を、
+Kabu-Note・kabu-signal含む全アプリが参照できる唯一の情報源とする。
+
+> **RLS注意:** `screener_stock_snapshots`自体はプレミアム会員のみ読める行レベルセキュリティが設定されているが、
+> このビューはテーブル所有者(postgres)権限で実行されるためRLSをバイパスし、`code/name/sector/close_price`のみを
+> 全認証ユーザーに公開する意図的な設計（JVQMスコア等の分析系カラムは含まないため、プレミアム価値を損なわない）。
+> `security_invoker`を付けて「RLSを効かせる」修正をしないこと（そうすると非プレミアム会員が空配列しか取得できなくなり、
+> 保有銘柄の社名表示ができなくなる）。
 
 ### 5-2. update_stocks.py（日次バッチ）
 
-**実行タイミング:** GitHub Actions、平日16時JST（東証休場日はスキップ、`FORCE_RUN=true` で強制実行可）
+**実行タイミング:** GitHub Actions、平日17時JST（東証休場日はスキップ、`FORCE_RUN=true` で強制実行可）。
+2026-09-22に16時→17時へ変更（japan-stock-screenerの完了(〜16:30 JST)を待つ必要があるため）。
 
 **処理フロー:**
 1. `holdings` テーブルから全ユーザーの証券コードを取得
-2. yfinance でバッチ取得（企業名・株価・配当など）
-3. `stocks` テーブルを UPSERT
-   - `sector` は `SECTOR_MAP` 辞書で英語→日本語変換（翻訳API不使用）
-   - `name_ja` は `deep-translator` (GoogleTranslator) で翻訳（不安定なため失敗時は英語名+株式会社）
-4. `daily_history` を UPSERT（ユーザーごとの評価額・損益率）
-5. **配当スナップショット:** 権利確定月の翌月1日以降かつ `dividend_records` 未存在の銘柄を自動INSERT
+2. `stock_master_latest`ビューから社名・業種・終値を取得（銘柄マスタに無いコードは前回の`stocks`保存値を維持）
+3. yfinanceでバッチ取得（配当・株式分割・前日差のみ）
+4. `stocks` テーブルを UPSERT
+5. `daily_history` を UPSERT（ユーザーごとの評価額・損益率）
+6. **配当スナップショット:** 権利確定月の翌月1日以降かつ `dividend_records` 未存在の銘柄を自動INSERT
 
 **配当スナップショットのトリガー条件:**
 ```python
@@ -408,10 +439,9 @@ japan-stock-screenerは同種の問題を`cloudflare-watchdog/`という外部cr
 
 | ライブラリ | 用途 |
 |------------|------|
-| yfinance | 株価・配当データ取得 |
+| yfinance | 配当・株式分割データ取得のみ（社名・業種・株価はstock_master_latestビュー、2026-09-22〜） |
 | supabase | Supabase Python クライアント |
 | jpholiday | 東証休場日判定 |
-| deep-translator | 社名の日本語翻訳（GoogleTranslator） |
 | pytz | タイムゾーン処理（JST） |
 
 ---
@@ -500,3 +530,27 @@ account_entitlements.plan
      誤発火することがある(2026-09-21に実例確認)」という既知の問題を、
      3アプリ共通の注意事項として記録してほしい。移行先ワークフロー新設時は
      cloudflare-watchdog相当の外部監視を最初から組み込むこと
+
+- **共有銘柄マスタ `stock_master_latest` ビュー新設（2026-09-22）**
+
+  Kabu-Noteの`stocks.name_ja`がGoogle翻訳(`deep-translator`)依存で不安定
+  （直近実行では保有銘柄48件中45件が英語名のまま保存される重大不具合）
+  だったため、japan-stock-screenerの`screener_stock_snapshots`から最新行を
+  返す共有ビュー`stock_master_latest`(code, name, sector, close_price)を
+  Supabase側に新設。Kabu-Noteの`update_stocks.py`はこれを参照するだけに
+  変更し、yfinance+Google翻訳での独自生成をやめた（詳細は本ファイル5-1b節）。
+  証券会社も`holdings.broker`(自由入力text)から`brokers`マスタテーブル＋
+  `holdings.broker_id`(FK)に変更。
+
+  **INTEGRATION_MAP.mdへの反映内容**:
+  1. 「銘柄データ取得はscreenerのバッチのみ」という既存原則の実装例外
+     として記載されていた`update_stocks.py`の扱いを更新：社名・業種・株価は
+     `stock_master_latest`ビュー経由で原則通りscreenerが唯一の情報源になった。
+     yfinance直接呼び出しは配当・株式分割・前日差の取得のみに縮小、と修正
+  2. `stock_master_latest`ビューを、全アプリが参照できる共有インフラとして
+     新たに記載してほしい。RLSは`screener_stock_snapshots`側でプレミアム会員
+     限定だが、このビューはテーブル所有者権限でRLSをバイパスし
+     code/name/sector/close_priceのみ全ユーザーに公開する意図的設計である旨、
+     誤って「RLSが効いていないセキュリティ不具合」と判断されないよう明記
+  3. `brokers`マスタテーブルの存在と、`holdings.broker`(旧・非推奨)から
+     `holdings.broker_id`への移行が進行中であることを記録してほしい

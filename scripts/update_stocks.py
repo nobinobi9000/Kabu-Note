@@ -1,19 +1,23 @@
 """
 Kabu Note - 株価自動更新スクリプト
-平日16時（JST）にGitHub Actionsで実行される。
+平日17時（JST）にGitHub Actionsで実行される
+（japan-stock-screenerの完了(〜16:30 JST)を待ってから動く、2026-09-22変更）。
 
 処理フロー:
   1. Supabase の holdings テーブルから全ユーザーの証券コードを取得
-  2. yfinance でバッチ取得（企業名・株価・配当など）
-  3. stocks テーブルを UPSERT
-  4. ユーザーごとの日次資産を集計して daily_history テーブルを UPSERT
-  5. 株式分割・併合の検知
-  6. 配当履歴(stock_dividend_events)の同期・ユーザーごとの確定記録(dividend_records)作成
+  2. 企業名・業種・株価は Supabase の共有ビュー stock_master_latest から取得
+     （japan-stock-screenerがJPX公式リストを元に毎日生成する日本語名。
+     翻訳は行わない。2026-09-22: 旧Google翻訳方式はCI環境からのアクセスが
+     頻繁にブロックされ、英語名のまま保存される不具合が常態化していたため廃止）
+  3. 配当・株式分割情報のみ yfinance でバッチ取得
+  4. stocks テーブルを UPSERT
+  5. ユーザーごとの日次資産を集計して daily_history テーブルを UPSERT
+  6. 株式分割・併合の検知
+  7. 配当履歴(stock_dividend_events)の同期・ユーザーごとの確定記録(dividend_records)作成
 """
 
 import calendar
 import os
-import re
 import time
 from collections import defaultdict
 from datetime import datetime, date
@@ -21,7 +25,6 @@ from datetime import datetime, date
 import yfinance as yf
 import jpholiday
 import pytz
-from deep_translator import GoogleTranslator
 from supabase import create_client
 
 # ==========================================
@@ -29,20 +32,6 @@ from supabase import create_client
 # ==========================================
 SUFFIX = ".T"
 JST    = pytz.timezone("Asia/Tokyo")
-
-SECTOR_MAP = {
-    "Technology":             "テクノロジー",
-    "Financial Services":     "金融サービス",
-    "Communication Services": "通信サービス",
-    "Consumer Cyclical":      "一般消費財",
-    "Consumer Defensive":     "生活必需品",
-    "Healthcare":             "ヘルスケア",
-    "Industrials":            "資本財",
-    "Basic Materials":        "素材",
-    "Real Estate":            "不動産",
-    "Energy":                 "エネルギー",
-    "Utilities":              "公益事業",
-}
 
 # 配当履歴の取得対象期間（これより前の配当は取得しない。年度別グラフ表示に
 # 必要な範囲＋バッファ）
@@ -118,71 +107,68 @@ def get_splits(ticker: yf.Ticker) -> list:
         return []
 
 
-def _translate(translator: GoogleTranslator, text: str) -> str:
-    if not text:
-        return ""
-    try:
-        result = translator.translate(text)
-        if not result:
-            return text
-        # deep_translator が HTTP 500 エラーページを翻訳結果として返す場合を除外
-        if "500" in result[:30] or result[:5] == "Error" or "That's an error" in result:
-            print(f"    ⚠️ 翻訳APIエラー検出、原文を使用: {text[:40]}")
-            return text
-        return result
-    except Exception:
-        return text
+# ==========================================
+# 銘柄マスタ（社名・業種・終値）取得
+# ==========================================
+
+def fetch_stock_master(supabase, codes: list) -> dict:
+    """全アプリ共通の銘柄マスタ(stock_master_latestビュー、japan-stock-screener由来)
+    から社名(日本語)・業種・終値を取得する。code をキーにした dict を返す。"""
+    if not codes:
+        return {}
+    res = supabase.table("stock_master_latest") \
+        .select("code, name, sector, close_price") \
+        .in_("code", codes).execute()
+    return {row["code"]: row for row in (res.data or [])}
 
 
-def get_formatted_name(translator: GoogleTranslator, info: dict) -> str:
-    raw = info.get("longName") or info.get("shortName") or ""
-    if not raw:
-        return ""
-    name = _translate(translator, raw)
-    # 日本語に変換されなかった場合は shortName を使用
-    if not re.search(r"[ぁ-んァ-ン一-龥]", name or ""):
-        name = info.get("shortName") or raw
-    # 不要サフィックスを除去
-    for sfx in ["Ltd.", "LTD.", "ltd.", "Inc.", "INC.", "inc.",
-                "Corporation", "CO.,", "Co.,", "CO.LTD.", "Co.Ltd.", "K.K.", ","]:
-        name = name.replace(sfx, "")
-    name = name.strip()
-    # 「株式会社」を補完
-    if not any(k in name for k in ["株式会社", "（株）", "(株)"]):
-        name = name + "株式会社"
-    else:
-        name = name.replace("(株)", "株式会社").replace("（株）", "株式会社")
-    return name.strip()
+def fetch_existing_stocks(supabase, codes: list) -> dict:
+    """銘柄マスタに存在しないコード用のフォールバック（前回保存値を維持するため）。"""
+    if not codes:
+        return {}
+    res = supabase.table("stocks").select("code, name_ja, sector").in_("code", codes).execute()
+    return {row["code"]: row for row in (res.data or [])}
 
 
 # ==========================================
-# yfinance バッチ取得
+# yfinance バッチ取得（配当・株式分割・前日差のみ）
 # ==========================================
 
-def fetch_stock_data(codes: list) -> dict:
+def fetch_stock_data(supabase, codes: list) -> dict:
     unique = list(dict.fromkeys(codes))
-    print(f"  yfinance 取得: {len(unique)} 銘柄")
-    translator = GoogleTranslator(source="auto", target="ja")
+
+    print(f"  銘柄マスタ取得（社名・業種・終値）: {len(unique)} 銘柄")
+    master   = fetch_stock_master(supabase, unique)
+    existing = fetch_existing_stocks(supabase, [c for c in unique if c not in master])
+
+    print(f"  yfinance 取得（配当・株式分割・前日差のみ）: {len(unique)} 銘柄")
     cache = {}
 
     for code in unique:
         symbol = f"{code}{SUFFIX}"
         print(f"  [{code}] 取得中...")
+
+        m = master.get(code)
+        if m:
+            name_ja, sector, price = m["name"], m["sector"], (m["close_price"] or 0)
+        else:
+            prev = existing.get(code, {})
+            name_ja, sector, price = prev.get("name_ja") or "", prev.get("sector") or "", 0
+            print(f"    ⚠️ [{code}] 銘柄マスタに未掲載。前回値を維持します（name={name_ja or '(空)'}）")
+
         try:
             tkr  = yf.Ticker(symbol)
             info = tkr.info
             fast = tkr.fast_info
 
-            current_price  = fast.last_price or 0
             previous_close = fast.previous_close or 0
-            price_change   = round(current_price - previous_close, 1)
+            price_change   = round(price - previous_close, 1) if previous_close else 0
 
-            sector_en = info.get("sector") or info.get("industry") or ""
             cache[code] = {
-                "name_ja":       get_formatted_name(translator, info),
+                "name_ja":       name_ja,
                 "name_en":       info.get("longName") or info.get("shortName") or "",
-                "sector":        SECTOR_MAP.get(sector_en, sector_en),
-                "price":         current_price,
+                "sector":        sector,
+                "price":         price,
                 "price_change":  price_change,
                 "dividend_rate": info.get("dividendRate") or 0,
                 "dividend_month": get_dividend_month(tkr),
@@ -190,13 +176,14 @@ def fetch_stock_data(codes: list) -> dict:
                 "currency":      info.get("currency") or "JPY",
                 "splits":        get_splits(tkr),
             }
-            print(f"    ✅ {cache[code]['name_ja']}  終値={current_price}  前日差={price_change:+}")
+            print(f"    ✅ {name_ja}  終値={price}  前日差={price_change:+}")
 
         except Exception as e:
-            print(f"    ❌ [{code}] 取得失敗: {e}")
+            # 配当・分割・前日差の取得失敗。社名・業種・株価は銘柄マスタ由来のため影響を受けない。
+            print(f"    ❌ [{code}] yfinance取得失敗(配当・分割・前日差のみ影響): {e}")
             cache[code] = {
-                "name_ja": "", "name_en": "", "sector": "",
-                "price": 0, "price_change": 0,
+                "name_ja": name_ja, "name_en": "", "sector": sector,
+                "price": price, "price_change": 0,
                 "dividend_rate": 0, "dividend_month": "", "dividend_history": [],
                 "currency": "JPY",
                 "splits": [],
@@ -438,9 +425,9 @@ def main():
     codes = list(dict.fromkeys(h["code"] for h in holdings))
     print(f"  対象コード: {codes}")
 
-    # ── 2. yfinance でバッチ取得 ─────────────────────────────────────
-    print("\n--- yfinance 取得中 ---")
-    stock_cache = fetch_stock_data(codes)
+    # ── 2. 銘柄マスタ + yfinance(配当・分割)でバッチ取得 ──────────────
+    print("\n--- 銘柄データ取得中 ---")
+    stock_cache = fetch_stock_data(supabase, codes)
 
     # ── 3. stocks テーブルを UPSERT ──────────────────────────────────
     print("\n--- stocks テーブル更新中 ---")

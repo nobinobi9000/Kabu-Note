@@ -32,6 +32,17 @@ export function useHoldings() {
         ;(s || []).forEach(r => { stockMap[r.code] = r })
       }
 
+      // 証券会社マスタ取得（broker_id → 表示名）
+      const brokerIds = [...new Set((h || []).map(r => r.broker_id).filter(Boolean))]
+      let brokerMap = {}
+      if (brokerIds.length > 0) {
+        const { data: b } = await supabase
+          .from('brokers')
+          .select('id, name')
+          .in('id', brokerIds)
+        ;(b || []).forEach(r => { brokerMap[r.id] = r.name })
+      }
+
       // 結合 & 損益計算
       const merged = (h || []).map(r => {
         const stock     = stockMap[r.code] || null
@@ -40,7 +51,8 @@ export function useHoldings() {
         const costVal   = r.cost_price * r.quantity
         const pnl       = mktVal - costVal
         const pnlRate   = costVal > 0 ? (pnl / costVal) * 100 : 0
-        return { ...r, stock, mktVal, costVal, pnl, pnlRate }
+        const broker    = r.broker_id ? (brokerMap[r.broker_id] || null) : null
+        return { ...r, stock, broker, mktVal, costVal, pnl, pnlRate }
       })
       setHoldings(merged)
     } catch (e) {
@@ -53,13 +65,13 @@ export function useHoldings() {
   useEffect(() => { fetch() }, [fetch])
 
   // 追加
-  async function addHolding({ code, quantity, cost_price, broker, is_long_term, take_profit_pct, stop_loss_pct }) {
+  async function addHolding({ code, quantity, cost_price, broker_id, is_long_term, take_profit_pct, stop_loss_pct }) {
     const { error } = await supabase.from('holdings').insert({
       user_id:         user.id,
       code:            String(code).trim(),
       quantity:        Number(quantity),
       cost_price:      Number(cost_price),
-      broker:          broker?.trim() || null,
+      broker_id:       broker_id || null,
       is_long_term:    Boolean(is_long_term),
       take_profit_pct: take_profit_pct === null || take_profit_pct === undefined ? null : Number(take_profit_pct),
       stop_loss_pct:   stop_loss_pct === null || stop_loss_pct === undefined ? null : Number(stop_loss_pct),
@@ -69,12 +81,12 @@ export function useHoldings() {
   }
 
   // 更新
-  async function updateHolding(id, { quantity, cost_price, broker, is_long_term, take_profit_pct, stop_loss_pct }) {
+  async function updateHolding(id, { quantity, cost_price, broker_id, is_long_term, take_profit_pct, stop_loss_pct }) {
     const { error } = await supabase.from('holdings')
       .update({
         quantity:        Number(quantity),
         cost_price:      Number(cost_price),
-        broker:          broker?.trim() || null,
+        broker_id:       broker_id || null,
         is_long_term:    Boolean(is_long_term),
         take_profit_pct: take_profit_pct === null || take_profit_pct === undefined ? null : Number(take_profit_pct),
         stop_loss_pct:   stop_loss_pct === null || stop_loss_pct === undefined ? null : Number(stop_loss_pct),
