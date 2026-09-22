@@ -260,6 +260,8 @@ RLS: `authenticated`ロールに対しSELECTのみ全許可（`brokers_read_all`
 |--------|-----|------|
 | id | uuid PK | auth.users.id と同一 |
 | cash_balance | numeric | 現金残高（売却代金加算オプション用） |
+| is_screener_premium | bool | 日本株スクリーナー有償相当データの閲覧可否（2026-09-17追加） |
+| broker_order | jsonb | 証券会社セレクトのユーザーごとの表示順（brokers.idのuuid配列、null=デフォルト順。2026-09-23追加、個人設定「証券会社の並び順」から変更） |
 | updated_at | timestamptz | |
 
 #### `account_entitlements` — プラン管理
