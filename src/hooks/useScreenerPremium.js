@@ -4,11 +4,12 @@ import { useAuth } from './useAuth'
 
 /**
  * japan-stock-screenerの有償相当データ（screener_stock_snapshots上位30銘柄）を取得するフック。
- * profiles.is_screener_premiumがtrueのユーザーのみ、RLS経由で実際にデータが返ってくる
- * （フラグが無いユーザーはDB側のRLSでブロックされ空配列になる。2026-09-17追加、仮運用）。
+ * account_entitlements.planがbasic/premiumのユーザーのみ、RLS経由で実際にデータが返ってくる
+ * （それ以外はDB側のRLSでブロックされ空配列になる）。
+ * 2026-09-25: 仮フラグ profiles.is_screener_premium から account_entitlements に一本化。
  *
  * 返り値:
- *   isPremium : boolean（is_screener_premiumの値）
+ *   isPremium : boolean（プランがbasic/premiumか）
  *   top30     : 配列（isPremiumがfalseの場合は常に空配列）
  *   loading   : boolean
  */
@@ -24,13 +25,13 @@ export function useScreenerPremium() {
 
     async function load() {
       setLoading(true)
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('is_screener_premium')
+      const { data: entitlement } = await supabase
+        .from('account_entitlements')
+        .select('plan')
         .eq('id', user.id)
         .maybeSingle()
 
-      const premium = Boolean(profile?.is_screener_premium)
+      const premium = entitlement?.plan === 'basic' || entitlement?.plan === 'premium'
       if (cancelled) return
       setIsPremium(premium)
 
