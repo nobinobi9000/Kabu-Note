@@ -194,7 +194,10 @@ RLS: `authenticated`ロールに対しSELECTのみ全許可（`brokers_read_all`
 | manually_adjusted | bool | ユーザーが✏️で手動修正したか否か |
 | confirmed_at | timestamptz | |
 
-**ユニーク制約:** `(user_id, code, year, month)`
+**ユニーク制約:** `(user_id, code, ex_date)`（`dividend_records_user_id_code_ex_date_key`。
+旧ドキュメントは`(user_id, code, year, month)`と誤記していたが実際の制約はex_date単位。
+同一銘柄を複数証券会社に分けて保有するユーザーは、コードごとに株数を合算して1行にする
+必要がある。2026-09-29の障害対応で判明・修正、詳細は6節参照）
 
 **支払年ロジック:** `paymentYear = month >= 10 ? year + 1 : year`（10〜12月権利確定は翌年収入）
 
@@ -208,7 +211,16 @@ RLS: `authenticated`ロールに対しSELECTのみ全許可（`brokers_read_all`
 | updated_at | timestamptz | |
 
 **ユニーク制約:** `(user_id, year)`  
-**更新:** `addToAnnualSummary()` (src/lib/annualSummary.js) で差分加算UPSERT
+**更新:** `addToAnnualSummary()` (src/lib/annualSummary.js、フロント)・`_add_to_annual_summary()`
+(scripts/update_stocks.py、バッチ)は両方とも、DB側のRPC `increment_annual_summary(uuid, int, numeric, numeric)`
+を呼ぶだけ（2026-09-29改修）。以前は「読んで加算して書き戻す」方式で、
+① `annual_summary`にRLSポリシーが存在せず、フロント(本人セッション)からの読み書きが
+常にブロックされ売却時のrealized_pnl記録が無言で失敗、
+② 対象行が無い場合にPython側`postgrest`クライアントの`.maybe_single().execute()`が
+`existing`自体を`None`で返し`existing.data`でクラッシュ（2026-09-28の日次バッチ障害）、
+という2つの不具合があった。RPCへの置き換えで両方解消し、読み取りタイミング起因の
+加算漏れ・上書きのリスクも構造的に無くなった。RLSポリシー`annual_summary_own`は
+本人限定(auth.uid()=user_id)。
 
 #### `daily_history` — 日次資産推移
 | カラム | 型 | 備考 |
@@ -397,10 +409,27 @@ kabu-signal 側は読み取り実装済みのため、UI を追加すれば損�
 
 | # | 内容 | 優先度 |
 |---|------|--------|
-| 1 | `name_ja` の翻訳が不安定（deep-translatorがHTTP 500を返すことがある）。翻訳失敗時は英語名+「株式会社」になる。 | 低 |
+| 1 | ~~`name_ja` の翻訳が不安定~~ → 2026-09-22に解消。`stock_master_latest`ビュー参照に変更済み（5-1b節） | 解消済み |
 | 2 | `dividend_month` が yfinance の「最後の権利確定日」に依存しているため、yfinance が翌年に更新した後の空白期間にスナップショットが取れない可能性がある（スクリプトが毎日実行されているので実際の被害は限定的） | 中 |
 | 3 | `autoConfirm`（フロントエンド）と `update_stocks.py` のスナップショット（バッチ）が二重で動作。バッチが先に実行されれば問題ないが、順序保証なし | 低 |
 | 4 | `annual_summary` の `received_dividends` は差分加算方式のため、dividend_records の金額を修正した際に差分のみ反映（updateAmount 内で実装済み） | — |
+
+### 障害記録
+
+- **2026-09-28: `update_stocks.py`が配当確定処理でクラッシュ（2つの不具合、修正・バックフィル済み）**
+
+  ①`_add_to_annual_summary()`が、対象行の無いユーザーで`existing.data`にアクセスし
+  `AttributeError`でクラッシュ（本日ぶん35銘柄の1件目で停止、残り34銘柄が未処理のまま
+  バッチ終了）。②同一銘柄を複数証券会社に分けて保有するユーザーの2件目insertで
+  `dividend_records`の一意制約`(user_id, code, ex_date)`違反（バックフィル作業中に発覚。
+  9/28時点では①が先に発生していたため②は未発現だったが、①を直しただけでは②で
+  再度止まっていた）。
+
+  **対応:** 両方の根本原因である「読んで加算して書き戻す」方式をDB側の原子的なRPC
+  `increment_annual_summary`に置き換え（5節の`annual_summary`参照）、②は同一銘柄の
+  保有を合算してから1回だけinsertするよう修正。2026-09-29に、未作成だった配当確定
+  38件と対応する`annual_summary`の加算をSQLで手動バックフィル済み（対象ユーザー:
+  10fa6158/8f6441c8/9a269a1f、合計約167万円ぶん）。
 
 ### 保留中のTODO
 
