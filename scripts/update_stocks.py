@@ -246,18 +246,15 @@ def detect_stock_splits(supabase, holdings: list, stock_cache: dict) -> int:
 # ==========================================
 
 def _add_to_annual_summary(supabase, user_id: str, year: int, received_dividends: float) -> None:
-    """annual_summary.received_dividends に加算する（既存行があれば加算、無ければ新規作成）。"""
-    existing = supabase.table("annual_summary") \
-        .select("realized_pnl, received_dividends") \
-        .eq("user_id", user_id).eq("year", year).maybe_single().execute()
-    s = existing.data
-    supabase.table("annual_summary").upsert({
-        "user_id":            user_id,
-        "year":               year,
-        "realized_pnl":       float(s["realized_pnl"]) if s else 0,
-        "received_dividends": (float(s["received_dividends"]) if s else 0) + received_dividends,
-        "updated_at":         datetime.now(JST).isoformat(),
-    }, on_conflict="user_id,year").execute()
+    """annual_summary.received_dividends に加算する。DB側のRPCで原子的に加算するため、
+    「読んで足して書き戻す」方式特有の加算漏れ・上書きのリスクが無い
+    (2026-09-29: 旧実装は対象行が無いとexisting自体がNoneになりクラッシュしていた)。"""
+    supabase.rpc("increment_annual_summary", {
+        "p_user_id":             user_id,
+        "p_year":                year,
+        "p_realized_pnl":        0,
+        "p_received_dividends":  received_dividends,
+    }).execute()
 
 
 DEFAULT_DIVIDEND_PAYMENT_LAG_MONTHS = 3  # 会社ごとの設定が無い場合の既定ラグ(月)
@@ -349,6 +346,11 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
 
     created = 0
     for code, ex_date, rate in new_events:
+        # 同一銘柄を複数の証券会社に分けて保有しているユーザーは株数を合算する。
+        # dividend_recordsは(user_id, code, ex_date)が一意制約のため、保有行ごとに
+        # 個別insertすると2件目で重複キーエラーになりバッチ全体が止まっていた
+        # (2026-09-29発見。保有開始前の分は従来通り対象外)。
+        quantity_by_user: dict[str, int] = {}
         for h in holdings:
             if h["code"] != code:
                 continue
@@ -362,7 +364,10 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
             if ex_date <= holding_created:
                 continue  # 保有開始前の配当は対象外
 
-            quantity     = int(float(h["quantity"]))
+            uid = h["user_id"]
+            quantity_by_user[uid] = quantity_by_user.get(uid, 0) + int(float(h["quantity"]))
+
+        for user_id, quantity in quantity_by_user.items():
             amount       = round(rate * quantity)
             lag_months   = lag_by_code.get(code, DEFAULT_DIVIDEND_PAYMENT_LAG_MONTHS)
             payment_date = add_months(ex_date, lag_months)
@@ -370,7 +375,7 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
             status       = "scheduled" if payment_date > today else "confirmed"
 
             supabase.table("dividend_records").insert({
-                "user_id":        h["user_id"],
+                "user_id":        user_id,
                 "code":           code,
                 "year":           ex_date.year,
                 "month":          ex_date.month,
@@ -383,11 +388,11 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
                 "auto_confirmed": True,
             }).execute()
 
-            _add_to_annual_summary(supabase, h["user_id"], payment_year, amount)
+            _add_to_annual_summary(supabase, user_id, payment_year, amount)
 
             print(f"  確定記録作成: {code} ({ex_date.isoformat()}) {amount:,}円 → "
                   f"{payment_year}年収入・推定支払日{payment_date.isoformat()}({status}) "
-                  f"(user: {h['user_id'][:8]}...)")
+                  f"(user: {user_id[:8]}...)")
             created += 1
 
     print(f"  確定記録 {created} 件作成")
