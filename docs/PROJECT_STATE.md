@@ -452,6 +452,12 @@ kabu-signalはPush通知(PWA)のためだけに存在させる価値が薄いと
 | 5 | 本番でKabu-Note経由の通知が数日安定稼働するのを確認 | 未着手 |
 | 6 | kabu-signalのワークフローを停止し、kabu-signal自体をアーカイブ | 未着手 |
 
+**2026-09-29再確認:** ユーザーより「kabu-signal収束させる方向」と改めて明言あり。
+9/26(金)の`morning-scan.yml`定期実行が完全に未発火（GitHub純正scheduleの信頼性問題の
+再現）を確認したが、kabu-signal自体には手を入れず、この方針どおりフェーズ4での
+Kabu-Note側watchdog実装に一本化する（kabu-signal/docs/PROJECT_STATE.md冒頭にも
+同旨を明記済み）。
+
 **フェーズ4の必須要件（2026-09-22追記）:** kabu-signalの`morning-scan.yml`は
 GitHub純正の`schedule`トリガーのみに依存しており、2026-09-21に設定
 （月〜金12:00 UTC）と全く一致しない曜日・時刻（日曜18:00 UTC）で誤発火する
