@@ -513,7 +513,7 @@ VITE_SUPABASE_ANON_KEY=eyJ...（Supabase anon key）
 ### デプロイ
 
 ```bash
-vercel deploy --prod --yes --cwd "C:\Users\tkouno\Desktop\Claude\Kabu-Note"
+vercel deploy --prod --yes --cwd "C:\Users\tkouno\Desktop\Claude\stocks\Kabu-Note"
 ```
 
 または GitHub push → Vercel 自動デプロイ（main ブランチ）
