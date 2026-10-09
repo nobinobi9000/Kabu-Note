@@ -354,16 +354,18 @@ Kabu-Note・kabu-signal含む全アプリが参照できる唯一の情報源と
 
 ### 5-2. update_stocks.py（日次バッチ）
 
-**実行タイミング:** GitHub Actions、平日17時JST（東証休場日はスキップ、`FORCE_RUN=true` で強制実行可）。
-2026-09-22に16時→17時へ変更（japan-stock-screenerの完了(〜16:30 JST)を待つ必要があるため）。
+**実行タイミング:** GitHub Actions、平日17時JST（cron `0 8 * * 1-5`）。ただし**実起動は6.5〜9時間遅れて日付をまたぐのが常態**（2026-09/10の直近10回すべて）。
+**処理は起動時刻に依存しない設計**（2026-10-10改修）: 基準日S=`screener_snapshots`の最新`snapshot_date`で動き、休場ゲートは無い。
+何度・いつ走っても同じ結果になる（冪等）。`concurrency`で同時起動を直列化。
 
 **処理フロー:**
+0. **基準日S**を`screener_snapshots`の最新取引日から取得（取得失敗・0行なら何も書かず非ゼロ終了）。期待取引日Tと比較し、S<Tなら警告を出して最後に非ゼロ終了（カレンダーは診断のみ）
 1. `holdings` テーブルから全ユーザーの証券コードを取得
-2. `stock_master_latest`ビューから社名・業種・終値を取得（銘柄マスタに無いコードは前回の`stocks`保存値を維持）
+2. `screener_stock_snapshots`の`snapshot_date=S`から社名・業種・終値を取得（Sに有効な行が無い銘柄=6401等は`stocks`の既存値を維持し、0で上書きしない。ログに件数を明示）
 3. yfinanceでバッチ取得（配当・株式分割・前日差のみ）
 4. `stocks` テーブルを UPSERT
-5. `daily_history` を UPSERT（ユーザーごとの評価額・損益率）
-6. **配当スナップショット:** 権利確定月の翌月1日以降かつ `dividend_records` 未存在の銘柄を自動INSERT
+5. `daily_history` を UPSERT（`date`=S。ユーザーごとの評価額・損益率）
+6. **配当スナップショット:** 基準日Sで判定し、`dividend_records` 未存在の銘柄を自動INSERT
 
 **配当スナップショットのトリガー条件:**
 ```python
@@ -375,7 +377,8 @@ if today >= trigger and not existing_record:
 **環境変数:**
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `FORCE_RUN`（任意、"true"/"1"/"yes" で休場日チェックをスキップ）
+- `DRY_RUN`（任意、"true" で読み取りのみ。書込み系は一切呼ばず実行内容だけログに出す。workflow手動実行の`dry_run`入力）
+- ※`FORCE_RUN`は2026-10-10に廃止（休場ゲート自体を廃止したため不要）
 
 ### 5-3. Supabase Edge Function
 
@@ -415,6 +418,19 @@ kabu-signal 側は読み取り実装済みのため、UI を追加すれば損�
 | 4 | `annual_summary` の `received_dividends` は差分加算方式のため、dividend_records の金額を修正した際に差分のみ反映（updateAmount 内で実装済み） | — |
 
 ### 障害記録
+
+- **2026-10-10: 日次バッチが起動時刻の日付で休場判定し、10/9(金)分を丸ごとスキップ（修正・復旧済み）**
+
+  GitHub Actionsの遅延で10/10(土)00:00 JSTに起動 → 旧`is_tse_holiday(today)`が「土曜=休場日」と判定し
+  `【判定】東証休場日のためスキップします`で全処理をスキップ（終了コード0の無言スキップ）。`stocks`は10/8終値のまま、
+  `daily_history`は日付ラベルがずれて（10/9ラベルに10/8終値、10/5・10/7・10/8は欠損）いた。
+  根本原因は「壁時計の日付（起動時刻）」と「データの取引日」の同一視。**対応:** 基準日をスナップショットの取引日Sにし、
+  休場ゲート廃止・冪等化・`concurrency`追加・`force_run`→`dry_run`置換・公開ログからユーザーID/金額の出力削除・
+  6401の価格0上書き停止（コミット f184506、テスト27件）。復旧: `daily_history`の10/9行を10/8行へ退避してから
+  本実行（stocks=マスタ 47/47一致、10/10行0件）。PDCA記録: `_hub\handoff\kabu-note\2026-10-10-batch-date-dependency\`。
+  **残:** ①10/13(火)以降の実起動で`daily_history`の日付がSになることの観察 ②GitHub側で壊れたqueued run 37642362604
+  （キャンセルAPIが409）③kabu-signalの同種欠陥（10/2・10/9の金曜分が無言スキップ、収束方針下・別サイクル候補）
+  ④`holdings`取得にページング無し（1000行超で切れる）⑤6401はscreener対象外のため`stocks.price`は0のまま。
 
 - **2026-09-28: `update_stocks.py`が配当確定処理でクラッシュ（2つの不具合、修正・バックフィル済み）**
 
@@ -524,7 +540,8 @@ vercel deploy --prod --yes --cwd "C:\Users\tkouno\Desktop\Claude\stocks\Kabu-Not
 
 ### バッチ手動実行
 
-GitHub Actions から手動トリガー（`FORCE_RUN=true` を設定）で休場日でも実行可能。
+GitHub Actions から手動トリガー（`workflow_dispatch`）で、いつでも実行可能（休場ゲートは無く、基準日はスナップショットの最新取引日）。
+事前確認したいときは`dry_run=true`で1回流し、`データ基準日`・`期待取引日`・更新予定を確認する。
 
 ---
 
