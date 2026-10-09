@@ -4,23 +4,36 @@ Kabu Note - 株価自動更新スクリプト
 （japan-stock-screenerの完了(〜16:30 JST)を待ってから動く、2026-09-22変更）。
 
 処理フロー:
+  0. screener_snapshots の最新 snapshot_date(=S、データ基準日)を取得する。
+     取得できなければ何も書かずに非ゼロ終了する。
   1. Supabase の holdings テーブルから全ユーザーの証券コードを取得
-  2. 企業名・業種・株価は Supabase の共有ビュー stock_master_latest から取得
+  2. 企業名・業種・株価は screener_stock_snapshots の snapshot_date=S の行から取得
      （japan-stock-screenerがJPX公式リストを元に毎日生成する日本語名。
      翻訳は行わない。2026-09-22: 旧Google翻訳方式はCI環境からのアクセスが
-     頻繁にブロックされ、英語名のまま保存される不具合が常態化していたため廃止）
+     頻繁にブロックされ、英語名のまま保存される不具合が常態化していたため廃止）。
+     Sに有効な行が無い銘柄は stocks の既存値(price等)を維持し、0で上書きしない。
   3. 配当・株式分割情報のみ yfinance でバッチ取得
   4. stocks テーブルを UPSERT
-  5. ユーザーごとの日次資産を集計して daily_history テーブルを UPSERT
+  5. ユーザーごとの日次資産を集計して daily_history テーブルを UPSERT（date=S）
   6. 株式分割・併合の検知
   7. 配当履歴(stock_dividend_events)の同期・ユーザーごとの確定記録(dividend_records)作成
+
+基準日の考え方（2026-10-10 修正）:
+  処理の基準日は「起動時刻の日付」ではなく「スナップショットの取引日 S」。
+  GitHub Actions の schedule は数時間〜終日遅れることが常態のため、起動時刻で
+  処理の可否・日付ラベルを決めると、遅延起動の日に全処理がスキップされたり
+  履歴の日付がずれたりする。何度・いつ走っても同じ結果になる(冪等)ように、
+  起動時刻は updated_at とログにだけ使う。東証カレンダーは「期待取引日 T」を
+  求めて S<T を警告(非ゼロ終了)するための診断にだけ使い、処理の可否には使わない。
+  DRY_RUN=true の場合は読み取りのみを行い、書込み(insert/upsert/update/delete/rpc)は実行しない。
 """
 
 import calendar
 import os
+import sys
 import time
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, time as dtime, timedelta
 
 import yfinance as yf
 import jpholiday
@@ -36,6 +49,10 @@ JST    = pytz.timezone("Asia/Tokyo")
 # 配当履歴の取得対象期間（これより前の配当は取得しない。年度別グラフ表示に
 # 必要な範囲＋バッファ）
 DIVIDEND_HISTORY_SINCE = date(2024, 1, 1)
+
+# 期待取引日の判定に使う「その日のスナップショットが出揃っているはずの時刻」(JST)。
+# japan-stock-screener の watchdog の最終確認(未配信ならエラーメール)時刻に揃えた値。
+SNAPSHOT_EXPECTED_BY = dtime(20, 0)
 
 
 # ==========================================
@@ -53,10 +70,75 @@ def is_tse_holiday(target: date) -> bool:
     return False
 
 
+def expected_trading_date(now_jst: datetime) -> date:
+    """起動時刻(JST)の時点で、スナップショットが出揃っているはずの最新の取引日(T)を返す。
+    診断(S<T の警告)にだけ使う。処理の可否には使わない。
+    SNAPSHOT_EXPECTED_BY(20:00 JST)より前なら前日扱いとし、休場日なら営業日まで遡る。"""
+    if now_jst.tzinfo is not None:
+        now_jst = now_jst.astimezone(JST)
+    d = now_jst.date()
+    if now_jst.time() < SNAPSHOT_EXPECTED_BY:
+        d -= timedelta(days=1)
+    while is_tse_holiday(d):
+        d -= timedelta(days=1)
+    return d
+
+
 def get_supabase_client():
     url = os.environ["SUPABASE_URL"]
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     return create_client(url, key)
+
+
+def env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("true", "1", "yes")
+
+
+# 書込み系の操作名。DRY_RUN では実行せず、行数だけをログに出す（中身は出さない）。
+_WRITE_OPS = ("insert", "upsert", "update", "delete")
+
+
+class _NoopExecution:
+    """DRY_RUN で書込みを実行しないときに返すダミー。チェーンされたメソッドを全て受け流す。"""
+    data = []
+    count = None
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: self
+
+    def execute(self):
+        return self
+
+
+class _DryRunTable:
+    def __init__(self, table, name):
+        self._table = table
+        self._name  = name
+
+    def __getattr__(self, attr):
+        target = getattr(self._table, attr)
+        if attr in _WRITE_OPS:
+            def skipped(payload=None, *args, **kwargs):
+                n = len(payload) if isinstance(payload, list) else 1
+                print(f"  [DRY_RUN] 書込みスキップ: {self._name}.{attr} ({n} 行)")
+                return _NoopExecution()
+            return skipped
+        return target
+
+
+class DryRunClient:
+    """読み取りだけを本物のクライアントに委譲し、書込み(insert/upsert/update/delete/rpc)は
+    実行せずにログへ出すだけにするラッパー(DRY_RUN=true 用)。"""
+
+    def __init__(self, client):
+        self._client = client
+
+    def table(self, name):
+        return _DryRunTable(self._client.table(name), name)
+
+    def rpc(self, fn, params=None, *args, **kwargs):
+        print(f"  [DRY_RUN] 書込みスキップ: rpc {fn}")
+        return _NoopExecution()
 
 
 def get_dividend_month(ticker: yf.Ticker) -> str:
@@ -111,22 +193,37 @@ def get_splits(ticker: yf.Ticker) -> list:
 # 銘柄マスタ（社名・業種・終値）取得
 # ==========================================
 
-def fetch_stock_master(supabase, codes: list) -> dict:
-    """全アプリ共通の銘柄マスタ(stock_master_latestビュー、japan-stock-screener由来)
-    から社名(日本語)・業種・終値を取得する。code をキーにした dict を返す。"""
+def fetch_latest_snapshot(supabase):
+    """screener_snapshots から最新の1行(snapshot_date, is_incomplete, success_rate)を返す。
+    行が無ければ None。例外は呼び出し側で扱う。"""
+    res = supabase.table("screener_snapshots") \
+        .select("snapshot_date, is_incomplete, success_rate") \
+        .order("snapshot_date", desc=True).limit(1).execute()
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def fetch_snapshot_prices(supabase, codes: list, snapshot_date: date) -> dict:
+    """screener_stock_snapshots の snapshot_date=S の行から社名(日本語)・業種・終値を取得する
+    (japan-stock-screener 由来。service_role で読む)。有効な行
+    (fetch_success=true かつ終値あり)だけを code をキーにした dict で返す。"""
     if not codes:
         return {}
-    res = supabase.table("stock_master_latest") \
-        .select("code, name, sector, close_price") \
+    res = supabase.table("screener_stock_snapshots") \
+        .select("code, name, sector, close_price, fetch_success") \
+        .eq("snapshot_date", snapshot_date.isoformat()) \
         .in_("code", codes).execute()
-    return {row["code"]: row for row in (res.data or [])}
+    return {row["code"]: row for row in (res.data or [])
+            if row.get("fetch_success") and row.get("close_price")}
 
 
 def fetch_existing_stocks(supabase, codes: list) -> dict:
-    """銘柄マスタに存在しないコード用のフォールバック（前回保存値を維持するため）。"""
+    """Sに有効な行が無いコード用のフォールバック（前回保存値を維持するため）。"""
     if not codes:
         return {}
-    res = supabase.table("stocks").select("code, name_ja, sector").in_("code", codes).execute()
+    res = supabase.table("stocks") \
+        .select("code, name_ja, sector, price, price_change") \
+        .in_("code", codes).execute()
     return {row["code"]: row for row in (res.data or [])}
 
 
@@ -134,11 +231,11 @@ def fetch_existing_stocks(supabase, codes: list) -> dict:
 # yfinance バッチ取得（配当・株式分割・前日差のみ）
 # ==========================================
 
-def fetch_stock_data(supabase, codes: list) -> dict:
+def fetch_stock_data(supabase, codes: list, snapshot_date: date) -> dict:
     unique = list(dict.fromkeys(codes))
 
-    print(f"  銘柄マスタ取得（社名・業種・終値）: {len(unique)} 銘柄")
-    master   = fetch_stock_master(supabase, unique)
+    print(f"  スナップショット取得（社名・業種・終値, 基準日={snapshot_date.isoformat()}）: {len(unique)} 銘柄")
+    master   = fetch_snapshot_prices(supabase, unique, snapshot_date)
     existing = fetch_existing_stocks(supabase, [c for c in unique if c not in master])
 
     print(f"  yfinance 取得（配当・株式分割・前日差のみ）: {len(unique)} 銘柄")
@@ -149,12 +246,20 @@ def fetch_stock_data(supabase, codes: list) -> dict:
         print(f"  [{code}] 取得中...")
 
         m = master.get(code)
+        stale = m is None
         if m:
-            name_ja, sector, price = m["name"], m["sector"], (m["close_price"] or 0)
+            name_ja, sector, price = m["name"], m["sector"], m["close_price"]
+            stale_change = None
         else:
+            # Sに有効な行が無い銘柄: stocks の既存値を維持する(0で上書きしない)。
+            # 価格・前日差は「S以前の価格」のままになるため、daily_history の評価にも
+            # この価格を使い、件数をログに残す。
             prev = existing.get(code, {})
-            name_ja, sector, price = prev.get("name_ja") or "", prev.get("sector") or "", 0
-            print(f"    ⚠️ [{code}] 銘柄マスタに未掲載。前回値を維持します（name={name_ja or '(空)'}）")
+            name_ja, sector = prev.get("name_ja") or "", prev.get("sector") or ""
+            price        = prev.get("price") or 0
+            stale_change = prev.get("price_change") or 0
+            print(f"    ⚠️ [{code}] 基準日{snapshot_date.isoformat()}の有効な終値なし。"
+                  f"stocks の既存値を維持します（price={price}, name={name_ja or '(空)'}）")
 
         try:
             tkr  = yf.Ticker(symbol)
@@ -163,12 +268,15 @@ def fetch_stock_data(supabase, codes: list) -> dict:
 
             previous_close = fast.previous_close or 0
             price_change   = round(price - previous_close, 1) if previous_close else 0
+            if stale:
+                price_change = stale_change
 
             cache[code] = {
                 "name_ja":       name_ja,
                 "name_en":       info.get("longName") or info.get("shortName") or "",
                 "sector":        sector,
                 "price":         price,
+                "price_stale":   stale,
                 "price_change":  price_change,
                 "dividend_rate": info.get("dividendRate") or 0,
                 "dividend_month": get_dividend_month(tkr),
@@ -179,11 +287,12 @@ def fetch_stock_data(supabase, codes: list) -> dict:
             print(f"    ✅ {name_ja}  終値={price}  前日差={price_change:+}")
 
         except Exception as e:
-            # 配当・分割・前日差の取得失敗。社名・業種・株価は銘柄マスタ由来のため影響を受けない。
+            # 配当・分割・前日差の取得失敗。社名・業種・株価はスナップショット由来のため影響を受けない。
             print(f"    ❌ [{code}] yfinance取得失敗(配当・分割・前日差のみ影響): {e}")
             cache[code] = {
                 "name_ja": name_ja, "name_en": "", "sector": sector,
-                "price": price, "price_change": 0,
+                "price": price, "price_stale": stale,
+                "price_change": stale_change if stale else 0,
                 "dividend_rate": 0, "dividend_month": "", "dividend_history": [],
                 "currency": "JPY",
                 "splits": [],
@@ -234,7 +343,7 @@ def detect_stock_splits(supabase, holdings: list, stock_cache: dict) -> int:
                 "ratio":      ratio,
                 "status":     "pending",
             }).execute()
-            print(f"  検知: {code} {split_date} 比率{ratio} (holding_id={h['id'][:8]}...)")
+            print(f"  検知: {code} {split_date} 比率{ratio}")
             created += 1
 
     print(f"  新規検知 {created} 件")
@@ -280,13 +389,14 @@ def get_dividend_payment_lags(supabase, codes: list) -> dict:
             for row in (res.data or [])}
 
 
-def refresh_dividend_status(supabase, today: date) -> int:
-    """推定支払日(payment_date)を過ぎた scheduled レコードを confirmed に更新する
-    (2026-09-13追加。年をまたぐ配当の受取年管理を正しく行うための状態遷移)。"""
+def refresh_dividend_status(supabase, ref_date: date) -> int:
+    """推定支払日(payment_date)がデータ基準日(ref_date)以前の scheduled レコードを
+    confirmed に更新する(2026-09-13追加。年をまたぐ配当の受取年管理を正しく行うための状態遷移)。
+    判定は起動時刻ではなくデータ基準日で行う(2026-10-10)。"""
     res = supabase.table("dividend_records") \
         .select("id") \
         .eq("status", "scheduled") \
-        .lte("payment_date", today.isoformat()) \
+        .lte("payment_date", ref_date.isoformat()) \
         .execute()
     ids = [row["id"] for row in (res.data or [])]
     if not ids:
@@ -326,7 +436,7 @@ def sync_dividend_events(supabase, stock_cache: dict) -> list:
     return new_events
 
 
-def create_dividend_snapshots(supabase, holdings: list, new_events: list, today: date) -> int:
+def create_dividend_snapshots(supabase, holdings: list, new_events: list, ref_date: date) -> int:
     """新規に検知した配当イベントについて、保有開始日より後であれば
     その時点の保有株数でユーザーごとの確定記録(dividend_records)を作成する。
     権利確定日から検知までのタイムラグを最短化することで、売却による
@@ -338,7 +448,9 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
     ラグ(stocks.dividend_payment_lag_months)から推定支払日(payment_date)を
     算出し、そのyearをpayment_yearとする(2026-09-13、根本原因の修正)。
     支払日が未到来のものはstatus='scheduled'として区別し、実際に支払日を
-    過ぎたら refresh_dividend_status() が'confirmed'に更新する。"""
+    過ぎたら refresh_dividend_status() が'confirmed'に更新する。
+    scheduled/confirmed の判定はデータ基準日(ref_date)で行い、起動時刻には依存しない
+    (2026-10-10)。"""
     if not new_events:
         return 0
 
@@ -372,7 +484,7 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
             lag_months   = lag_by_code.get(code, DEFAULT_DIVIDEND_PAYMENT_LAG_MONTHS)
             payment_date = add_months(ex_date, lag_months)
             payment_year = payment_date.year
-            status       = "scheduled" if payment_date > today else "confirmed"
+            status       = "scheduled" if payment_date > ref_date else "confirmed"
 
             supabase.table("dividend_records").insert({
                 "user_id":        user_id,
@@ -390,9 +502,9 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
 
             _add_to_annual_summary(supabase, user_id, payment_year, amount)
 
-            print(f"  確定記録作成: {code} ({ex_date.isoformat()}) {amount:,}円 → "
-                  f"{payment_year}年収入・推定支払日{payment_date.isoformat()}({status}) "
-                  f"(user: {user_id[:8]}...)")
+            # 公開ログのため、ユーザーID・金額など個人に紐づく情報は出さない(原則6)
+            print(f"  確定記録作成: {code} ({ex_date.isoformat()}) → "
+                  f"{payment_year}年収入・推定支払日{payment_date.isoformat()}({status})")
             created += 1
 
     print(f"  確定記録 {created} 件作成")
@@ -403,20 +515,63 @@ def create_dividend_snapshots(supabase, holdings: list, new_events: list, today:
 # メイン処理
 # ==========================================
 
-def main():
-    now      = datetime.now(JST)
-    today    = now.date()
-    today_str = today.isoformat()
+def parse_snapshot_date(value) -> date:
+    return date.fromisoformat(str(value)[:10])
+
+
+def report_snapshot_status(snapshot: dict, now: datetime):
+    """データ基準日(S)と期待取引日(T)を比較してログに出す。
+    戻り値: (S, behind)。behind=True は S<T（スナップショット未到着の疑い）。
+    カレンダーは診断にのみ使い、処理の可否は決めない。"""
+    ref_date = parse_snapshot_date(snapshot["snapshot_date"])
+    expected = expected_trading_date(now)
+    launch_is_holiday = is_tse_holiday(now.astimezone(JST).date() if now.tzinfo else now.date())
+    print(f"  データ基準日={ref_date.isoformat()} / 期待取引日={expected.isoformat()} / "
+          f"起動={now.strftime('%Y-%m-%d %H:%M:%S')} JST"
+          f"（起動日は休場日: {'はい' if launch_is_holiday else 'いいえ'}）")
+
+    behind = ref_date < expected
+    if behind:
+        print(f"【警告】スナップショットが期待取引日に届いていません: データ基準日={ref_date.isoformat()} は"
+              f"期待取引日={expected.isoformat()} より前です。株価は{ref_date.isoformat()}時点のままです。"
+              f"基準日分の処理は行い、最後に非ゼロ終了します。")
+    if is_tse_holiday(ref_date):
+        print(f"【警告】データ基準日={ref_date.isoformat()} は東証の休場日です。"
+              f"スナップショットの日付の付き方を確認してください。")
+    if snapshot.get("is_incomplete"):
+        print(f"【警告】不完全なスナップショットです（success_rate={snapshot.get('success_rate')}）。"
+              f"取得できた銘柄の終値のみを使用します。")
+    return ref_date, behind
+
+
+def main(now=None, supabase=None, dry_run=None) -> int:
+    """終了コードを返す（0=正常、1=異常）。now / supabase / dry_run はテスト用に注入できる。
+    now は起動時刻(JST, tz-aware)。updated_at・ログ・期待取引日の診断にだけ使い、
+    処理の基準日には使わない。"""
+    now = now or datetime.now(JST)
+    if dry_run is None:
+        dry_run = env_flag("DRY_RUN")
     print(f"--- 処理開始: {now.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-    force = os.environ.get("FORCE_RUN", "").lower() in ("true", "1", "yes")
-    if not force and is_tse_holiday(today):
-        print("【判定】東証休場日のためスキップします。（強制実行: FORCE_RUN=true で上書き可）")
-        return
-    if force:
-        print("【判定】FORCE_RUN=true のため休場日チェックをスキップします。")
+    if supabase is None:
+        supabase = get_supabase_client()
+    if dry_run:
+        print("【DRY_RUN】読み取りのみ行い、書込みは実行しません。")
+        supabase = DryRunClient(supabase)
 
-    supabase = get_supabase_client()
+    # ── 0. データ基準日 S（最新スナップショットの取引日）を取得 ────────
+    print("\n--- スナップショット基準日の確認 ---")
+    try:
+        snapshot = fetch_latest_snapshot(supabase)
+    except Exception as e:
+        print(f"【エラー】screener_snapshots の取得に失敗しました。書込みを行わず終了します: {e}")
+        return 1
+    if snapshot is None:
+        print("【エラー】screener_snapshots に行がありません。書込みを行わず終了します。")
+        return 1
+    ref_date, behind = report_snapshot_status(snapshot, now)
+    ref_str = ref_date.isoformat()
+    final_code = 1 if behind else 0
 
     # ── 1. holdings から全証券コードを取得 ──────────────────────────
     print("\n--- holdings 取得中 ---")
@@ -425,14 +580,23 @@ def main():
 
     if not holdings:
         print("【警告】保有銘柄がありません。処理を終了します。")
-        return
+        return final_code
 
     codes = list(dict.fromkeys(h["code"] for h in holdings))
     print(f"  対象コード: {codes}")
 
-    # ── 2. 銘柄マスタ + yfinance(配当・分割)でバッチ取得 ──────────────
+    # ── 2. スナップショット(S) + yfinance(配当・分割)でバッチ取得 ───────
     print("\n--- 銘柄データ取得中 ---")
-    stock_cache = fetch_stock_data(supabase, codes)
+    try:
+        stock_cache = fetch_stock_data(supabase, codes, ref_date)
+    except Exception as e:
+        print(f"【エラー】銘柄データの取得に失敗しました。書込みを行わず終了します: {e}")
+        return 1
+
+    stale_codes = [c for c, d in stock_cache.items() if d.get("price_stale")]
+    if stale_codes:
+        print(f"【注意】基準日{ref_str}の終値が無く、stocks の既存価格（{ref_str}以前の価格）を使う銘柄: "
+              f"{len(stale_codes)} 件 {stale_codes}")
 
     # ── 3. stocks テーブルを UPSERT ──────────────────────────────────
     print("\n--- stocks テーブル更新中 ---")
@@ -455,6 +619,7 @@ def main():
     print(f"  {len(upsert_rows)} 件 UPSERT 完了")
 
     # ── 4. ユーザーごとの日次資産を集計して daily_history を UPSERT ──
+    # 日付ラベルは起動日ではなくデータ基準日 S。公開ログのため個人別の金額・IDは出さない。
     print("\n--- daily_history 更新中 ---")
     user_totals = defaultdict(lambda: {"market": 0.0, "cost": 0.0})
 
@@ -474,17 +639,18 @@ def main():
         rate = round((mkt - cst) / cst * 100, 2) if cst > 0 else 0.0
         history_rows.append({
             "user_id":            user_id,
-            "date":               today_str,
+            "date":               ref_str,
             "total_market_value": mkt,
             "total_pnl_rate":     rate,
         })
-        print(f"  user={user_id[:8]}...  資産={mkt:,.0f}円  損益率={rate:+.2f}%")
 
+    if stale_codes:
+        print(f"  評価に{ref_str}以前の価格を使った銘柄: {len(stale_codes)} 件 {stale_codes}")
     supabase.table("daily_history").upsert(
         history_rows,
         on_conflict="user_id,date"
     ).execute()
-    print(f"  {len(history_rows)} ユーザー分 UPSERT 完了")
+    print(f"  {len(history_rows)} ユーザー分 UPSERT 完了（date={ref_str}）")
 
     # ── 5. 株式分割・併合の検知（pendingレコード作成のみ、自動調整はしない）──
     print("\n--- 株式分割・併合 検知中 ---")
@@ -493,11 +659,14 @@ def main():
     # ── 6. 配当履歴の同期・ユーザーごとの確定記録作成 ─────────────────
     print("\n--- 配当履歴の同期中 ---")
     new_events = sync_dividend_events(supabase, stock_cache)
-    create_dividend_snapshots(supabase, holdings, new_events, today)
-    refresh_dividend_status(supabase, today)
+    create_dividend_snapshots(supabase, holdings, new_events, ref_date)
+    refresh_dividend_status(supabase, ref_date)
 
     print(f"\n--- 全処理完了 ---")
+    if behind:
+        print("【警告】スナップショット未到着の疑いがあるため、非ゼロ終了します（上記の警告を参照）。")
+    return final_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

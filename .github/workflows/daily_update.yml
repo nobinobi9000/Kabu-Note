@@ -8,10 +8,17 @@ on:
     - cron: '0 8 * * 1-5'
   workflow_dispatch:
     inputs:
-      force_run:
-        description: '休場日チェックをスキップして強制実行'
+      dry_run:
+        description: '読み取りのみ（DBへ書き込まず、実行内容だけログに出す）'
         type: boolean
         default: false
+
+# 同時起動を直列化する（遅延した run が重なっても二重に書き込まない）。
+# 処理はデータ基準日(スナップショットの取引日)で冪等だが、配当イベントの
+# 検知〜insert は非原子的なため、二重起動を排除しておく。
+concurrency:
+  group: kabu-note-daily-update
+  cancel-in-progress: false
 
 jobs:
   update-stocks:
@@ -35,5 +42,5 @@ jobs:
         env:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          FORCE_RUN:                 ${{ inputs.force_run }}
+          DRY_RUN:                   ${{ inputs.dry_run }}
         run: python scripts/update_stocks.py
