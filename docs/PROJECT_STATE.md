@@ -358,6 +358,15 @@ Kabu-Note・kabu-signal含む全アプリが参照できる唯一の情報源と
 **処理は起動時刻に依存しない設計**（2026-10-10改修）: 基準日S=`screener_snapshots`の最新`snapshot_date`で動き、休場ゲートは無い。
 何度・いつ走っても同じ結果になる（冪等）。`concurrency`で同時起動を直列化。
 
+**起動の仕組み（2026-11-17 追加・本番反映は承認とデプロイ後）:** GitHubの`schedule`は残しつつ（バックアップ）、japan-stock-screenerの
+Cloudflare Worker `stock-screener-watchdog`（`src/kabu-note.js`）が、cron `*/5 7-11 * * 2-6`（UTC。JST 16:00〜20:55の5分おき）で
+「screenerの今日分が成功したか」を検知し、成功を確認してから本ワークフローを`workflow_dispatch`で起動する（遅延の解消が目的）。
+窓の開始16:45・再試行は30分間隔で1日最大4回・最終確認20:05。判定は`event==workflow_dispatch`かつscreener完了後に作成された run のみ
+（前日スロットの遅延`schedule` runを今日分と誤認しない）。`workflow_dispatch`に任意入力`expected_snapshot_date`（YYYY-MM-DD）を追加し、
+Workerが当日(JST)を渡す。指定日よりSが前なら警告＋S分は処理＋最後に非ゼロ終了（screenerの成功がスナップショット保存を保証しないため）。
+未指定なら従来と同一。トークンは Kabu-Note 専用PATを Worker の secret `KABU_NOTE_GITHUB_TOKEN` に登録（値は文書に書かない）。
+`KABU_NOTE_DRY_RUN`が"true"のあいだは GET のみで起動しない。
+
 **処理フロー:**
 0. **基準日S**を`screener_snapshots`の最新取引日から取得（取得失敗・0行なら何も書かず非ゼロ終了）。期待取引日Tと比較し、S<Tなら警告を出して最後に非ゼロ終了（カレンダーは診断のみ）
 1. `holdings` テーブルから全ユーザーの証券コードを取得

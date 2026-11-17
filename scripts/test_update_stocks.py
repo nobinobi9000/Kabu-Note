@@ -595,5 +595,79 @@ class TestWorkflowAndSource(unittest.TestCase):
         self.assertIsNone(re.search(r"https://[a-z0-9]{20}\.supabase\.co", src))
 
 
+class TestExpectedSnapshotDateGuard(unittest.TestCase):
+    """M2: 起動側が指定する expected_snapshot_date による期待日の引き上げ（未指定なら従来と同一）"""
+
+    def _run(self, expected, now=None, dry_run=False):
+        client = FakeSupabase(make_data())
+        buf = io.StringIO()
+        with mock.patch.object(us.yf, "Ticker", FakeTicker),              mock.patch.object(us.time, "sleep", lambda *_: None),              contextlib.redirect_stdout(buf):
+            rc = us.main(now=now or jst(2026, 10, 9, 17, 30), supabase=client,
+                         dry_run=dry_run, expected_snapshot_date=expected)
+        return rc, buf.getvalue(), client
+
+    def test_i_expected_ahead_of_snapshot_warns_processes_and_fails(self):
+        rc, out, client = self._run("2026-10-13")   # S=10/9 < 指定日、起動は20:00前
+        self.assertEqual(rc, 1)
+        self.assertIn("【警告】", out)
+        self.assertIn("期待取引日=2026-10-13", out)
+        self.assertEqual(len(client.writes_to("stocks", "upsert")), 1)
+        self.assertEqual(len(client.writes_to("daily_history", "upsert")), 1)
+
+    def test_ii_expected_equals_snapshot_is_ok(self):
+        rc, out, _ = self._run(S)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("【警告】", out)
+
+    def test_iii_unspecified_is_identical_to_current(self):
+        rc0, out0, c0 = run_main(now=jst(2026, 10, 9, 17, 30))
+        for value in (None, ""):
+            with self.subTest(value=value):
+                rc, out, c = self._run(value)
+                self.assertEqual(rc, rc0)
+                self.assertEqual(out, out0)
+                self.assertEqual(normalized_writes(c), normalized_writes(c0))
+
+    def test_env_var_is_read_when_argument_omitted(self):
+        with mock.patch.dict(os.environ, {"EXPECTED_SNAPSHOT_DATE": "2026-10-13"}):
+            rc, _, _ = run_main(now=jst(2026, 10, 9, 17, 30))
+        self.assertEqual(rc, 1)
+        with mock.patch.dict(os.environ, {"EXPECTED_SNAPSHOT_DATE": ""}):
+            rc, _, _ = run_main(now=jst(2026, 10, 9, 17, 30))
+        self.assertEqual(rc, 0)
+
+    def test_iv_invalid_value_fails_before_any_write(self):
+        for bad in ("2026-13-99", "abc", "2026/10/09", "20261009"):
+            with self.subTest(bad=bad):
+                rc, out, client = self._run(bad)
+                self.assertEqual(rc, 1)
+                self.assertEqual(client.writes, [])
+                self.assertIn("EXPECTED_SNAPSHOT_DATE が不正", out)
+
+    def test_v_dry_run_writes_nothing(self):
+        rc, _, client = self._run("2026-10-13", dry_run=True)
+        self.assertEqual(rc, 1)
+        self.assertEqual(client.writes, [])
+
+    def test_lower_expected_does_not_lower_threshold(self):
+        # 指定日が従来の期待日より前でも、期待日は下がらない（max を取る）
+        rc, out, _ = run_main(now=jst(2026, 10, 13, 21, 0))
+        self.assertEqual(rc, 1)
+        client = FakeSupabase(make_data())
+        buf = io.StringIO()
+        with mock.patch.object(us.yf, "Ticker", FakeTicker),              mock.patch.object(us.time, "sleep", lambda *_: None),              contextlib.redirect_stdout(buf):
+            rc2 = us.main(now=jst(2026, 10, 13, 21, 0), supabase=client,
+                          expected_snapshot_date="2026-10-01")
+        self.assertEqual(rc2, 1)
+        self.assertIn("期待取引日=2026-10-13", buf.getvalue())
+
+    def test_workflow_passes_input_to_env(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, ".github", "workflows", "daily_update.yml"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("expected_snapshot_date:", text)
+        self.assertIn("EXPECTED_SNAPSHOT_DATE:    ${{ inputs.expected_snapshot_date }}", text)
+
+
 if __name__ == "__main__":
     unittest.main()

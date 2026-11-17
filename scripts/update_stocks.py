@@ -519,12 +519,28 @@ def parse_snapshot_date(value) -> date:
     return date.fromisoformat(str(value)[:10])
 
 
-def report_snapshot_status(snapshot: dict, now: datetime):
+def parse_expected_snapshot_date(value):
+    """EXPECTED_SNAPSHOT_DATE（YYYY-MM-DD）を date にする。未指定(None/空)は None。
+    形式が不正なら ValueError。"""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if len(text) != 10:
+        raise ValueError(f"形式が YYYY-MM-DD ではありません: {text!r}")
+    return date.fromisoformat(text)
+
+
+def report_snapshot_status(snapshot: dict, now: datetime, min_expected=None):
     """データ基準日(S)と期待取引日(T)を比較してログに出す。
     戻り値: (S, behind)。behind=True は S<T（スナップショット未到着の疑い）。
+    min_expected が指定された場合、T を max(T, min_expected) に引き上げる
+    （起動側が「今日分のはず」と指定したとき、20:00閾値より前でも未到着を検知するため）。
     カレンダーは診断にのみ使い、処理の可否は決めない。"""
     ref_date = parse_snapshot_date(snapshot["snapshot_date"])
     expected = expected_trading_date(now)
+    if min_expected is not None and min_expected > expected:
+        print(f"  起動側の指定により期待取引日を引き上げ: {expected.isoformat()} -> {min_expected.isoformat()}")
+        expected = min_expected
     launch_is_holiday = is_tse_holiday(now.astimezone(JST).date() if now.tzinfo else now.date())
     print(f"  データ基準日={ref_date.isoformat()} / 期待取引日={expected.isoformat()} / "
           f"起動={now.strftime('%Y-%m-%d %H:%M:%S')} JST"
@@ -544,14 +560,23 @@ def report_snapshot_status(snapshot: dict, now: datetime):
     return ref_date, behind
 
 
-def main(now=None, supabase=None, dry_run=None) -> int:
+def main(now=None, supabase=None, dry_run=None, expected_snapshot_date=None) -> int:
     """終了コードを返す（0=正常、1=異常）。now / supabase / dry_run はテスト用に注入できる。
     now は起動時刻(JST, tz-aware)。updated_at・ログ・期待取引日の診断にだけ使い、
-    処理の基準日には使わない。"""
+    処理の基準日には使わない。
+    expected_snapshot_date(省略時は環境変数 EXPECTED_SNAPSHOT_DATE): 起動側が指定する
+    「このデータ基準日以降のはず」の日付。未指定なら従来と完全に同一の動作。"""
     now = now or datetime.now(JST)
     if dry_run is None:
         dry_run = env_flag("DRY_RUN")
+    if expected_snapshot_date is None:
+        expected_snapshot_date = os.environ.get("EXPECTED_SNAPSHOT_DATE", "")
     print(f"--- 処理開始: {now.strftime('%Y-%m-%d %H:%M:%S')} ---")
+    try:
+        min_expected = parse_expected_snapshot_date(expected_snapshot_date)
+    except ValueError as e:
+        print(f"【エラー】EXPECTED_SNAPSHOT_DATE が不正です。書込みを行わず終了します: {e}")
+        return 1
 
     if supabase is None:
         supabase = get_supabase_client()
@@ -569,7 +594,7 @@ def main(now=None, supabase=None, dry_run=None) -> int:
     if snapshot is None:
         print("【エラー】screener_snapshots に行がありません。書込みを行わず終了します。")
         return 1
-    ref_date, behind = report_snapshot_status(snapshot, now)
+    ref_date, behind = report_snapshot_status(snapshot, now, min_expected)
     ref_str = ref_date.isoformat()
     final_code = 1 if behind else 0
 

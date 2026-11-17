@@ -12,6 +12,11 @@ on:
         description: '読み取りのみ（DBへ書き込まず、実行内容だけログに出す）'
         type: boolean
         default: false
+      expected_snapshot_date:
+        description: '期待するデータ基準日 YYYY-MM-DD（任意。Worker が当日のJST日付を渡す。未指定なら従来どおり）'
+        type: string
+        required: false
+        default: ''
 
 # 同時起動を直列化する（遅延した run が重なっても二重に書き込まない）。
 # 処理はデータ基準日(スナップショットの取引日)で冪等だが、配当イベントの
@@ -43,4 +48,5 @@ jobs:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           DRY_RUN:                   ${{ inputs.dry_run }}
+          EXPECTED_SNAPSHOT_DATE:    ${{ inputs.expected_snapshot_date }}
         run: python scripts/update_stocks.py
